@@ -1,0 +1,16 @@
+# Local product specifications and working notes
+instrtxt*
+GAME_TASKS_SPEC.md
+VISUAL_DESIGN_SPEC.md
+
+# Local browser test artifacts
+.browser-*/
+*-check.png
+diag*.png
+site-check.png
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
