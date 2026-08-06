@@ -8,18 +8,32 @@
 2. Penny’s Number Dash — аркада на числа 1–6.
 3. Archie’s Color Lab — творческая игра на цвета.
 
-## Запуск
+## Запуск через Vite
 
-Откройте `index.html` в современном браузере. Установка зависимостей и интернет не требуются.
+Требуется Node.js 20.19+ или 22.12+.
+
+```bash
+npm install
+npm run dev
+```
+
+После запуска Vite автоматически откроет сайт по адресу `http://localhost:5173/`.
+
+Для проверки production-сборки:
+
+```bash
+npm run build
+npm run preview
+```
 
 Английская речь воспроизводится встроенным синтезатором браузера. Прогресс ученика, сердца, монеты, значки и история сессий сохраняются в `localStorage` этого браузера.
 
 ## Файлы
 
 - `index.html` — точка входа;
-- `styles.css` — дизайн и адаптивность;
-- `app.js` — задания, игры, профиль и награды;
-- `assets/characters/` — изображения Penny, Archie, Leo и Mia;
+- `src/styles.css` — дизайн и адаптивность;
+- `src/main.js` — задания, игры, профиль и награды;
+- `public/assets/characters/` — изображения Penny, Archie, Leo и Mia;
 - `instrtxt`, `GAME_TASKS_SPEC.md`, `VISUAL_DESIGN_SPEC.md` — исходные требования.
 
 ## Проверка

@@ -14,3 +14,8 @@ site-check.png
 Thumbs.db
 .vscode/
 .idea/
+
+# Vite dependencies and production build
+node_modules/
+dist/
+npm-debug.log*
