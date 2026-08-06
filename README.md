@@ -2,6 +2,8 @@
 
 Готовый статический сайт с тремя образовательными играми:
 
+**Онлайн-версия:** https://nikulenkovan1978-spec.github.io/english-town-games/
+
 1. English Town: First Meeting — диалоговая визуальная новелла.
 2. Penny’s Number Dash — аркада на числа 1–6.
 3. Archie’s Color Lab — творческая игра на цвета.
