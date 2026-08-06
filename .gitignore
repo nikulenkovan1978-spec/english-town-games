@@ -8,6 +8,8 @@ VISUAL_DESIGN_SPEC.md
 *-check.png
 diag*.png
 site-check.png
+.codex-testshots/
+public/assets/heroes/*.png
 
 # Operating system and editor files
 .DS_Store
