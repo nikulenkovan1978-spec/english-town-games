@@ -3,19 +3,34 @@ import "./styles.css";
 const app = document.querySelector("#app");
 const toastLayer = document.querySelector("#toast-layer");
 const BASE = import.meta.env.BASE_URL;
-const hero = (name) => `${BASE}assets/heroes/${name}-action.webp`;
+const actionHero = (name) => `${BASE}assets/heroes/${name}-action.webp`;
+const talkHero = (name) => `${BASE}assets/heroes-v3/${name}-talk.webp`;
+const world = (name) => `${BASE}assets/worlds-v3/${name}.webp`;
 
 const ICONS = {
   spark: `<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 2l4.6 11.8L37 18.5l-11 6.7L24.8 38 16 28.7 3.4 31.5l6.2-11.2L3 9.4l12.7 2.5z" fill="currentColor"/></svg>`,
+  heart: `<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 35S4 26 4 14.5C4 7.3 13 4.4 20 12c7-7.6 16-4.7 16 2.5C36 26 20 35 20 35z" fill="currentColor"/></svg>`,
   sound: `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12h6l7-6v20l-7-6H5z" fill="currentColor"/><path d="M22 11c2.5 2.8 2.5 7.2 0 10M25.5 7.5c5 4.7 5 12.3 0 17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
   back: `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M18 7l-9 9 9 9M10 16h14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   play: `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 5l18 11L9 27z" fill="currentColor"/></svg>`,
+  profile: `<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="11" r="6" fill="currentColor"/><path d="M5 28c.8-7 5-10 11-10s10.2 3 11 10" fill="currentColor"/></svg>`,
 };
 
-const progress = JSON.parse(localStorage.getItem("englishTownV2") || "null") || {
-  sparks: 0,
-  badges: [],
-  sound: true,
+const GAME_META = {
+  greeting: { title: "Hello City", color: "#ff65ac", total: 8 },
+  runner: { title: "Number Rush", color: "#42d7ff", total: 6 },
+  paint: { title: "Color Blaster", color: "#a969ff", total: 6 },
+};
+
+const oldProgress = JSON.parse(localStorage.getItem("englishTownV2") || "null");
+const savedProgress = JSON.parse(localStorage.getItem("englishTownV3") || "null");
+const progress = savedProgress || {
+  profile: { name: "", avatar: "leo", createdAt: null },
+  sparks: oldProgress?.sparks || 0,
+  hearts: 0,
+  badges: oldProgress?.badges || [],
+  sessions: [],
+  sound: oldProgress?.sound ?? true,
 };
 
 const state = {
@@ -23,143 +38,268 @@ const state = {
   greeting: null,
   runner: null,
   paint: null,
+  activeSessionId: null,
   timer: null,
   raf: null,
 };
 
 function saveProgress() {
-  localStorage.setItem("englishTownV2", JSON.stringify(progress));
+  localStorage.setItem("englishTownV3", JSON.stringify(progress));
+}
+
+function avatarSource(name = progress.profile.avatar) {
+  if (name === "leo" || name === "mia" || name === "penny" || name === "archie") return talkHero(name);
+  return talkHero("leo");
+}
+
+function formatDate(value) {
+  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function beginSession(game) {
+  const session = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    game,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    tasks: [],
+    correct: 0,
+    mistakes: 0,
+    hearts: 0,
+    sparks: 0,
+  };
+  progress.sessions.unshift(session);
+  progress.sessions = progress.sessions.slice(0, 30);
+  state.activeSessionId = session.id;
+  saveProgress();
+  return session;
+}
+
+function activeSession() {
+  return progress.sessions.find((item) => item.id === state.activeSessionId);
+}
+
+function recordMistake() {
+  const session = activeSession();
+  if (session) session.mistakes += 1;
+  saveProgress();
+}
+
+function recordTask(label, reward) {
+  const session = activeSession();
+  if (!session) return;
+  session.tasks.push(label);
+  session.correct += 1;
+  session.sparks += reward;
+  saveProgress();
+}
+
+function finishSession(score, total) {
+  const session = activeSession();
+  if (!session || session.completedAt) return session?.hearts || 0;
+  const ratio = score / total;
+  const hearts = ratio >= .92 && session.mistakes <= 1 ? 3 : ratio >= .65 ? 2 : 1;
+  session.completedAt = new Date().toISOString();
+  session.hearts = hearts;
+  progress.hearts += hearts;
+  saveProgress();
+  return hearts;
 }
 
 class SoundStudio {
   constructor() {
     this.ctx = null;
     this.master = null;
-    this.musicTimer = null;
+    this.music = null;
+    this.effects = null;
+    this.delay = null;
+    this.timer = null;
     this.step = 0;
+    this.scene = "hub";
+    this.voices = [];
+    this.loadVoices();
+  }
+
+  loadVoices() {
+    if (!("speechSynthesis" in window)) return;
+    const load = () => { this.voices = speechSynthesis.getVoices(); };
+    load();
+    speechSynthesis.addEventListener?.("voiceschanged", load);
   }
 
   async unlock() {
     if (!this.ctx) {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const compressor = this.ctx.createDynamicsCompressor();
+      compressor.threshold.value = -18;
+      compressor.knee.value = 14;
+      compressor.ratio.value = 4;
       this.master = this.ctx.createGain();
-      this.master.gain.value = progress.sound ? 0.62 : 0;
-      this.master.connect(this.ctx.destination);
+      this.music = this.ctx.createGain();
+      this.effects = this.ctx.createGain();
+      this.delay = this.ctx.createDelay(.6);
+      const feedback = this.ctx.createGain();
+      this.delay.delayTime.value = .17;
+      feedback.gain.value = .18;
+      this.delay.connect(feedback).connect(this.delay);
+      this.music.gain.value = .18;
+      this.effects.gain.value = .72;
+      this.music.connect(compressor);
+      this.effects.connect(compressor);
+      this.effects.connect(this.delay).connect(compressor);
+      compressor.connect(this.master).connect(this.ctx.destination);
+      this.master.gain.value = progress.sound ? .72 : 0;
     }
     if (this.ctx.state === "suspended") await this.ctx.resume();
-    this.startMusic();
+    this.startSequencer();
   }
 
-  tone(frequency, duration = 0.12, type = "sine", volume = 0.09, delay = 0) {
+  envelope(frequency, duration, type, volume, when = 0, destination = this.effects, detune = 0) {
     if (!this.ctx || !progress.sound) return;
-    const now = this.ctx.currentTime + delay;
+    const time = this.ctx.currentTime + when;
+    const oscillator = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, time);
+    oscillator.detune.value = detune;
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(Math.max(700, frequency * 4), time);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(260, frequency * 1.2), time + duration);
+    gain.gain.setValueAtTime(.0001, time);
+    gain.gain.exponentialRampToValueAtTime(volume, time + .012);
+    gain.gain.exponentialRampToValueAtTime(.0001, time + duration);
+    oscillator.connect(filter).connect(gain).connect(destination);
+    oscillator.start(time);
+    oscillator.stop(time + duration + .04);
+  }
+
+  sweep(from, to, duration = .18, volume = .08, type = "sine") {
+    if (!this.ctx || !progress.sound) return;
+    const now = this.ctx.currentTime;
     const oscillator = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     oscillator.type = type;
-    oscillator.frequency.setValueAtTime(frequency, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(volume, now + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    oscillator.connect(gain).connect(this.master);
-    oscillator.start(now);
-    oscillator.stop(now + duration + 0.03);
+    oscillator.frequency.setValueAtTime(from, now);
+    oscillator.frequency.exponentialRampToValueAtTime(to, now + duration);
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    oscillator.connect(gain).connect(this.effects);
+    oscillator.start();
+    oscillator.stop(now + duration + .03);
   }
 
-  noise(duration = 0.08, volume = 0.035) {
+  noise(duration = .08, volume = .04, highpass = 1000) {
     if (!this.ctx || !progress.sound) return;
-    const length = Math.floor(this.ctx.sampleRate * duration);
-    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    const buffer = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * duration), this.ctx.sampleRate);
     const channel = buffer.getChannelData(0);
-    for (let i = 0; i < length; i += 1) channel[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < channel.length; i += 1) channel[i] = Math.random() * 2 - 1;
     const source = this.ctx.createBufferSource();
-    const gain = this.ctx.createGain();
     const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
     filter.type = "highpass";
-    filter.frequency.value = 1200;
+    filter.frequency.value = highpass;
     gain.gain.setValueAtTime(volume, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+    gain.gain.exponentialRampToValueAtTime(.0001, this.ctx.currentTime + duration);
     source.buffer = buffer;
-    source.connect(filter).connect(gain).connect(this.master);
+    source.connect(filter).connect(gain).connect(this.effects);
     source.start();
   }
 
-  sfx(name) {
-    const sets = {
-      tap: () => this.tone(520, 0.07, "sine", 0.05),
-      move: () => this.tone(190, 0.055, "triangle", 0.025),
-      talk: () => [660, 820].forEach((n, i) => this.tone(n, 0.1, "sine", 0.07, i * 0.07)),
-      correct: () => [523, 659, 784, 1047].forEach((n, i) => this.tone(n, 0.2, "triangle", 0.1, i * 0.07)),
-      wrong: () => [190, 145].forEach((n, i) => this.tone(n, 0.18, "sawtooth", 0.055, i * 0.11)),
-      whoosh: () => { this.noise(0.18, 0.06); this.tone(340, 0.17, "sine", 0.05); },
-      shot: () => { this.tone(760, 0.09, "square", 0.055); this.noise(0.09, 0.045); },
-      finish: () => [523, 659, 784, 1047, 1319].forEach((n, i) => this.tone(n, 0.3, "triangle", 0.11, i * 0.09)),
-    };
-    sets[name]?.();
+  setScene(scene) {
+    this.scene = scene;
+    this.step = 0;
   }
 
-  speak(text) {
+  startSequencer() {
+    if (this.timer) return;
+    const scenes = {
+      hub: { beat: 250, melody: [523,659,784,659,587,698,880,698,523,659,784,1047,880,784,698,659], bass: 131 },
+      greeting: { beat: 285, melody: [392,494,587,494,440,523,659,523,392,494,587,698,659,587,523,494], bass: 98 },
+      runner: { beat: 190, melody: [440,554,659,880,659,554,494,659,740,988,740,659,554,740,880,1109], bass: 110 },
+      paint: { beat: 215, melody: [466,622,740,932,740,622,523,698,831,1047,831,698,622,740,932,1245], bass: 117 },
+    };
+    const tick = () => {
+      const config = scenes[this.scene] || scenes.hub;
+      if (progress.sound && this.ctx) {
+        const note = config.melody[this.step % config.melody.length];
+        if (this.step % 2 === 0) this.envelope(note, .22, "triangle", .024, 0, this.music);
+        if (this.step % 4 === 0) {
+          this.envelope(config.bass, .28, "sine", .045, 0, this.music);
+          this.sweep(125, 52, .1, .05, "sine");
+        }
+        if (this.step % 4 === 2) this.noise(.05, .012, 2200);
+        if (this.step % 2 === 1 && this.scene !== "greeting") this.noise(.025, .006, 5000);
+        this.step += 1;
+      }
+      clearTimeout(this.timer);
+      this.timer = setTimeout(tick, config.beat);
+    };
+    tick();
+  }
+
+  sfx(name) {
+    const sounds = {
+      tap: () => { this.envelope(620, .07, "sine", .045); this.envelope(930, .08, "triangle", .025, .025); },
+      profile: () => [523, 784, 1047].forEach((n, i) => this.envelope(n, .24, "triangle", .065, i * .07)),
+      talk: () => { this.envelope(740, .11, "sine", .055); this.envelope(988, .13, "triangle", .04, .07); },
+      lane: () => { this.sweep(260, 760, .16, .065, "triangle"); this.noise(.09, .025, 1800); },
+      shot: () => { this.sweep(980, 220, .2, .085, "sawtooth"); this.noise(.13, .06, 900); this.envelope(1240, .12, "square", .03, .03); },
+      wrong: () => { this.envelope(210, .2, "triangle", .045); this.envelope(165, .24, "sine", .04, .11); },
+      correct: () => { [523,659,784,1047].forEach((n, i) => this.envelope(n, .34, i % 2 ? "sine" : "triangle", .075, i * .055)); this.noise(.18, .035, 3200); },
+      finish: () => { [392,523,659,784,1047,1319].forEach((n, i) => this.envelope(n, .5, "triangle", .085, i * .075)); this.noise(.35, .04, 4000); },
+    };
+    sounds[name]?.();
+  }
+
+  chooseVoice(character) {
+    const english = this.voices.filter((voice) => /^en[-_]/i.test(voice.lang));
+    if (!english.length) return null;
+    const preferences = {
+      leo: ["Ryan", "Guy", "Andrew", "Christopher", "Daniel", "Male"],
+      mia: ["Ava", "Jenny", "Aria", "Samantha", "Sonia", "Female"],
+      penny: ["Jenny", "Aria", "Ava", "Samantha", "Female"],
+      archie: ["Ryan", "Guy", "Andrew", "Daniel", "Male"],
+      narrator: ["Ava", "Aria", "Jenny", "Samantha", "Female"],
+    };
+    const natural = ["Natural", "Online", "Neural", ...preferences[character] || preferences.narrator];
+    return english.sort((a, b) => natural.reduce((score, term, index) => score + (b.name.includes(term) ? 50 - index : 0) - (a.name.includes(term) ? 50 - index : 0), 0))[0];
+  }
+
+  speak(text, character = "narrator", options = {}) {
     if (!progress.sound || !("speechSynthesis" in window)) return;
     speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text.replace(/[!.?]/g, ""));
+    const utterance = new SpeechSynthesisUtterance(text.replace(/[★]/g, ""));
     utterance.lang = "en-US";
-    utterance.rate = 0.82;
-    utterance.pitch = 1.08;
+    utterance.voice = this.chooseVoice(character);
+    const settings = {
+      leo: { rate: .9, pitch: 1.16 }, mia: { rate: .88, pitch: 1.12 },
+      penny: { rate: .9, pitch: 1.2 }, archie: { rate: .91, pitch: 1.18 }, narrator: { rate: .86, pitch: 1.04 },
+    }[character] || { rate: .88, pitch: 1.08 };
+    utterance.rate = options.rate || settings.rate;
+    utterance.pitch = options.pitch || settings.pitch;
+    utterance.volume = .95;
     speechSynthesis.speak(utterance);
-  }
-
-  startMusic() {
-    if (this.musicTimer) return;
-    const melody = [523, 659, 784, 659, 587, 698, 880, 698, 523, 659, 784, 1047, 880, 784, 659, 587];
-    this.musicTimer = window.setInterval(() => {
-      if (!progress.sound || !this.ctx) return;
-      const note = melody[this.step % melody.length];
-      this.tone(note, 0.2, "triangle", 0.027);
-      if (this.step % 2 === 0) this.tone(note / 2, 0.22, "sine", 0.025);
-      if (this.step % 4 === 0) this.tone(82, 0.08, "sine", 0.065);
-      if (this.step % 4 === 2) this.noise(0.045, 0.013);
-      this.step += 1;
-    }, 245);
   }
 
   toggle() {
     progress.sound = !progress.sound;
     saveProgress();
-    if (this.master && this.ctx) {
-      this.master.gain.cancelScheduledValues(this.ctx.currentTime);
-      this.master.gain.linearRampToValueAtTime(progress.sound ? 0.62 : 0, this.ctx.currentTime + 0.08);
-    }
-    if (progress.sound) this.sfx("tap");
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(progress.sound ? .72 : 0, this.ctx.currentTime, .04);
     renderHeaderState();
+    if (progress.sound) this.sfx("tap");
   }
 }
 
 const audio = new SoundStudio();
 
 function clearGameLoops() {
-  if (state.timer) window.clearTimeout(state.timer);
+  if (state.timer) clearTimeout(state.timer);
   if (state.raf) cancelAnimationFrame(state.raf);
   state.timer = null;
   state.raf = null;
-  speechSynthesis?.cancel?.();
-}
-
-function toast(message, kind = "good") {
-  const el = document.createElement("div");
-  el.className = `game-toast ${kind}`;
-  el.textContent = message;
-  toastLayer.append(el);
-  setTimeout(() => el.remove(), 1700);
-}
-
-function burst(x = 50, y = 50, color = "#ffd54a") {
-  const layer = document.createElement("div");
-  layer.className = "burst-layer";
-  layer.style.setProperty("--x", `${x}%`);
-  layer.style.setProperty("--y", `${y}%`);
-  layer.style.setProperty("--burst", color);
-  layer.innerHTML = Array.from({ length: 18 }, (_, i) => `<i style="--i:${i}"></i>`).join("");
-  document.body.append(layer);
-  setTimeout(() => layer.remove(), 900);
+  window.speechSynthesis?.cancel();
+  document.querySelectorAll(".praise-pop").forEach((element) => element.remove());
 }
 
 function addSparks(amount) {
@@ -173,105 +313,151 @@ function awardBadge(id) {
   saveProgress();
 }
 
-function header(title = "English Town") {
-  return `<header class="game-header">
-    <button class="round-button back-button" data-action="home" aria-label="На главную">${ICONS.back}</button>
-    <div class="mini-logo"><span>ENGLISH</span><strong>${title}</strong></div>
+function toast(message, kind = "good") {
+  const element = document.createElement("div");
+  element.className = `game-toast ${kind}`;
+  element.textContent = message;
+  toastLayer.append(element);
+  setTimeout(() => element.remove(), 1800);
+}
+
+function burst(x = 50, y = 50, color = "#ffd54a") {
+  const layer = document.createElement("div");
+  layer.className = "burst-layer";
+  layer.style.setProperty("--x", `${x}%`);
+  layer.style.setProperty("--y", `${y}%`);
+  layer.style.setProperty("--burst", color);
+  layer.innerHTML = Array.from({ length: 24 }, (_, i) => `<i style="--i:${i}"></i>`).join("");
+  document.body.append(layer);
+  setTimeout(() => layer.remove(), 1100);
+}
+
+const praises = ["Brilliant!", "Fantastic!", "Amazing!", "Great job!", "You did it!"];
+function celebrate(detail, reward = 10, color = "#ffe04d", speaker = "narrator", speakPraise = true) {
+  const praise = praises[Math.floor(Math.random() * praises.length)];
+  audio.sfx("correct");
+  const overlay = document.createElement("div");
+  overlay.className = "praise-pop";
+  overlay.style.setProperty("--praise-color", color);
+  overlay.innerHTML = `<div class="praise-rays"></div><div class="praise-star">${ICONS.spark}</div><div><strong>${praise}</strong><span>${detail}</span><b>+${reward} ИСКР</b></div>`;
+  document.body.append(overlay);
+  burst(50, 45, color);
+  if (speakPraise) setTimeout(() => audio.speak(praise, speaker, { rate: .95 }), 120);
+  setTimeout(() => overlay.remove(), 1050);
+}
+
+function header(title = "ADVENTURES", showBack = true) {
+  const profileName = progress.profile.name || "Ученик";
+  return `<header class="game-header v3-header">
+    ${showBack ? `<button class="round-button back-button" data-action="home" aria-label="На главную">${ICONS.back}</button>` : `<div class="header-mark">ET</div>`}
+    <div class="mini-logo"><span>ENGLISH TOWN</span><strong>${title}</strong></div>
+    <button class="profile-chip" data-action="profile"><span><img src="${avatarSource()}" alt=""></span><b>${profileName}</b></button>
+    <div class="hud-pill heart-hud">${ICONS.heart}<strong data-heart-count>${progress.hearts}</strong></div>
     <div class="hud-pill spark-hud">${ICONS.spark}<strong data-spark-count>${progress.sparks}</strong></div>
-    <button class="round-button sound-button ${progress.sound ? "" : "is-muted"}" data-action="sound" aria-label="Включить или выключить звук">${ICONS.sound}</button>
+    <button class="round-button sound-button ${progress.sound ? "" : "is-muted"}" data-action="sound" aria-label="Звук">${ICONS.sound}</button>
   </header>`;
 }
 
 function renderHeaderState() {
   document.querySelectorAll("[data-spark-count]").forEach((el) => { el.textContent = progress.sparks; });
+  document.querySelectorAll("[data-heart-count]").forEach((el) => { el.textContent = progress.hearts; });
   document.querySelectorAll(".sound-button").forEach((el) => el.classList.toggle("is-muted", !progress.sound));
 }
 
 function renderStart() {
   clearGameLoops();
   state.screen = "start";
-  app.innerHTML = `<main class="sound-gate">
+  audio.setScene("hub");
+  const hasProfile = Boolean(progress.profile.name);
+  const form = hasProfile ? `<div class="return-player">
+      <span class="return-avatar"><img src="${avatarSource()}" alt=""></span>
+      <div><small>С ВОЗВРАЩЕНИЕМ</small><strong>${progress.profile.name}!</strong><p>${progress.hearts} сердечек • ${progress.sparks} искр</p></div>
+      <button class="power-button compact" data-action="enter-world"><span>ПРОДОЛЖИТЬ</span>${ICONS.play}</button>
+    </div>` : `<form class="player-create" data-profile-form>
+      <small>СОЗДАДИМ ТВОЙ ПРОФИЛЬ</small><h2>Как тебя зовут?</h2>
+      <label><span>Имя ученика</span><input name="studentName" maxlength="18" autocomplete="given-name" placeholder="Напиши своё имя" required></label>
+      <fieldset><legend>Выбери героя профиля</legend><div class="avatar-picker">${["leo","mia","penny","archie"].map((name, index) => `<label><input type="radio" name="avatar" value="${name}" ${index === 0 ? "checked" : ""}><span><img src="${talkHero(name)}" alt="${name}"></span><b>${name[0].toUpperCase() + name.slice(1)}</b></label>`).join("")}</div></fieldset>
+      <button class="power-button" type="submit"><span class="power-icon">${ICONS.play}</span><span><b>СОЗДАТЬ ПРОФИЛЬ</b><small>и войти со звуком</small></span></button>
+    </form>`;
+  app.innerHTML = `<main class="sound-gate v3-gate">
     <div class="gate-sky"><i></i><i></i><i></i></div>
-    <div class="gate-copy">
-      <div class="logo-chip">АНГЛИЙСКИЙ ПО ШАГАМ С НУЛЯ</div>
-      <h1><span>ENGLISH TOWN</span><strong>ADVENTURES</strong></h1>
-      <p>Три мира. Три приключения. Английский, в который хочется играть.</p>
-      <button class="power-button" data-action="enter-world">
-        <span class="power-icon">${ICONS.play}</span>
-        <span><b>ВОЙТИ В ИГРУ</b><small>со звуком и музыкой</small></span>
-      </button>
-    </div>
-    <div class="gate-portal" aria-hidden="true"><i></i><i></i><i></i></div>
-    <img class="gate-hero gate-leo" src="${hero("leo")}" alt="Leo">
-    <img class="gate-hero gate-mia" src="${hero("mia")}" alt="Mia">
-    <img class="gate-hero gate-penny" src="${hero("penny")}" alt="Penny">
-    <img class="gate-hero gate-archie" src="${hero("archie")}" alt="Archie">
-    <div class="gate-floor"></div>
+    <div class="v3-gate-title"><div class="logo-chip">АНГЛИЙСКИЙ ПО ШАГАМ С НУЛЯ</div><h1><span>ENGLISH TOWN</span><strong>ADVENTURES</strong></h1><p>Твоя личная история английских приключений</p></div>
+    <img class="gate-hero gate-leo" src="${actionHero("leo")}" alt="Leo"><img class="gate-hero gate-mia" src="${actionHero("mia")}" alt="Mia"><img class="gate-hero gate-penny" src="${actionHero("penny")}" alt="Penny"><img class="gate-hero gate-archie" src="${actionHero("archie")}" alt="Archie">
+    <section class="profile-entry">${form}</section><div class="gate-floor"></div>
   </main>`;
-}
-
-function sceneArt(type) {
-  if (type === "greeting") return `<div class="mini-scene greeting-art"><span class="house h1"></span><span class="house h2"></span><span class="street-lamp"></span><span class="speech-orb">HELLO!</span></div>`;
-  if (type === "runner") return `<div class="mini-scene runner-art"><span class="speed-line s1"></span><span class="speed-line s2"></span><span class="number-token n1">2</span><span class="number-token n2">5</span><span class="number-token n3">6</span></div>`;
-  return `<div class="mini-scene paint-art"><span class="paint-cloud c1"></span><span class="paint-cloud c2"></span><span class="paint-cloud c3"></span><span class="blaster-beam"></span></div>`;
 }
 
 function renderHome() {
   clearGameLoops();
   state.screen = "home";
-  app.innerHTML = `<main class="world-home">
-    ${header("ADVENTURES")}
-    <div class="world-sky"><span class="cloud cloud-a"></span><span class="cloud cloud-b"></span><span class="cloud cloud-c"></span></div>
-    <section class="world-intro">
-      <p class="eyebrow">ВЫБЕРИ ПРИКЛЮЧЕНИЕ</p>
-      <h1>Куда отправимся?</h1>
-      <p>Каждый мир — новая игровая механика и новый уровень сложности.</p>
-    </section>
-    <div class="adventure-map">
-      <svg class="map-path" viewBox="0 0 1000 540" preserveAspectRatio="none" aria-hidden="true"><path d="M85 390 C220 210 300 465 470 295 S710 110 905 250"/><path class="path-glow" d="M85 390 C220 210 300 465 470 295 S710 110 905 250"/></svg>
-      <button class="world-stop stop-greeting" data-game="greeting">
-        <span class="stop-number">01</span>${sceneArt("greeting")}
-        <span class="stop-copy"><small>БРОДИЛКА • 3 УРОВНЯ</small><strong>Hello City</strong><em>Знакомься с героями</em></span>
-        <span class="stop-status">${progress.badges.includes("greeting") ? "МИССИЯ ПРОЙДЕНА" : "НАЧАТЬ МИССИЮ"}</span>
-      </button>
-      <button class="world-stop stop-runner" data-game="runner">
-        <span class="stop-number">02</span>${sceneArt("runner")}
-        <span class="stop-copy"><small>ЭКШЕН-РАННЕР • 3 УРОВНЯ</small><strong>Number Rush</strong><em>Лови цифры 1–6</em></span>
-        <span class="stop-status">${progress.badges.includes("runner") ? "МИССИЯ ПРОЙДЕНА" : "НАЧАТЬ МИССИЮ"}</span>
-      </button>
-      <button class="world-stop stop-paint" data-game="paint">
-        <span class="stop-number">03</span>${sceneArt("paint")}
-        <span class="stop-copy"><small>МЕТКИЙ БЛАСТЕР • 3 УРОВНЯ</small><strong>Color Blaster</strong><em>Верни городу цвета</em></span>
-        <span class="stop-status">${progress.badges.includes("paint") ? "МИССИЯ ПРОЙДЕНА" : "НАЧАТЬ МИССИЮ"}</span>
-      </button>
-      <img class="map-hero map-archie" src="${hero("archie")}" alt="Archie">
-      <img class="map-hero map-penny" src="${hero("penny")}" alt="Penny">
-      <img class="map-hero map-mia" src="${hero("mia")}" alt="Mia">
+  audio.setScene("hub");
+  app.innerHTML = `<main class="hub-v3" style="--hub-bg:url('${world("adventure-hub")}')">
+    ${header("ADVENTURES", false)}
+    <div class="hub-light"></div>
+    <section class="hub-title"><small>ДОБРО ПОЖАЛОВАТЬ, ${progress.profile.name.toUpperCase()}</small><h1>Выбери новое приключение</h1><p>Играй, говори и собирай сердечки в своём профиле</p></section>
+    <div class="hub-portals">
+      <button class="hub-portal portal-talk" data-game="greeting"><span class="portal-orbit"><i></i><i></i><b>01</b></span><span class="portal-copy"><small>ИНТЕРАКТИВНАЯ ИСТОРИЯ</small><strong>Hello City</strong><em>Живые ситуации общения</em><b>${progress.badges.includes("greeting") ? "ПРОЙДЕНО" : "ИГРАТЬ"}</b></span></button>
+      <button class="hub-portal portal-number" data-game="runner"><span class="portal-orbit"><i></i><i></i><b>02</b></span><span class="portal-copy"><small>СКОРОСТНОЙ РАННЕР</small><strong>Number Rush</strong><em>Числа 1–6 на скорости</em><b>${progress.badges.includes("runner") ? "ПРОЙДЕНО" : "ИГРАТЬ"}</b></span></button>
+      <button class="hub-portal portal-color" data-game="paint"><span class="portal-orbit"><i></i><i></i><b>03</b></span><span class="portal-copy"><small>ЦВЕТОВОЙ БЛАСТЕР</small><strong>Colorworks</strong><em>Верни миру краски</em><b>${progress.badges.includes("paint") ? "ПРОЙДЕНО" : "ИГРАТЬ"}</b></span></button>
     </div>
-    <div class="reward-dock"><span class="reward-crystal">${ICONS.spark}</span><div><small>НАГРАДА ЗА ИГРЫ</small><strong>Искры, серии и значки миров</strong></div></div>
+    <img class="hub-friend hub-penny" src="${talkHero("penny")}" alt="Penny"><img class="hub-friend hub-archie" src="${talkHero("archie")}" alt="Archie">
+    <button class="session-shortcut" data-action="profile">${ICONS.profile}<span><small>МОЙ ПРОГРЕСС</small><strong>${progress.sessions.length} сессий • ${progress.hearts} сердечек</strong></span></button>
   </main>`;
 }
 
+function renderProfile() {
+  clearGameLoops();
+  state.screen = "profile";
+  const sessions = progress.sessions;
+  app.innerHTML = `<main class="profile-screen">
+    ${header("МОЙ ПРОФИЛЬ")}
+    <div class="profile-backdrop"></div>
+    <section class="profile-board">
+      <aside class="profile-card-main"><div class="profile-avatar-large"><img src="${avatarSource()}" alt="${progress.profile.avatar}"><i></i></div><small>УЧЕНИК ENGLISH TOWN</small><h1>${progress.profile.name}</h1><button data-action="edit-profile">ИЗМЕНИТЬ ИМЯ И ГЕРОЯ</button></aside>
+      <div class="profile-data">
+        <div class="profile-stats"><article class="heart-stat">${ICONS.heart}<span><b>${progress.hearts}</b><small>СЕРДЕЧЕК</small></span></article><article class="spark-stat">${ICONS.spark}<span><b>${progress.sparks}</b><small>ИСКР</small></span></article><article><span class="badge-mini">${progress.badges.length}</span><span><b>${progress.badges.length}/3</b><small>ЗНАЧКА МИРОВ</small></span></article></div>
+        <section class="session-history"><header><div><small>ИСТОРИЯ ЗАНЯТИЙ</small><h2>Мои игровые сессии</h2></div><span>${sessions.length}</span></header>
+          <div class="session-list">${sessions.length ? sessions.map((session) => sessionRow(session)).join("") : `<div class="empty-history"><span>${ICONS.spark}</span><h3>Здесь появятся твои занятия</h3><p>Выбери игру, и профиль запомнит выполненные задания и награды.</p><button data-action="home">ВЫБРАТЬ ИГРУ</button></div>`}</div>
+        </section>
+      </div>
+    </section>
+  </main>`;
+}
+
+function sessionRow(session) {
+  const meta = GAME_META[session.game];
+  const tasks = session.tasks.length ? session.tasks.join(" • ") : "Сессия начата, задания ещё не выполнены";
+  return `<article class="session-row" style="--session-color:${meta.color}"><div class="session-symbol"><i></i><b>${session.game === "greeting" ? "Hi" : session.game === "runner" ? "1–6" : "RGB"}</b></div><div class="session-main"><small>${formatDate(session.startedAt)}</small><h3>${meta.title}</h3><p>${tasks}</p></div><div class="session-result"><span>${session.correct}/${meta.total}</span><div>${Array.from({ length: 3 }, (_, i) => `<i class="${i < session.hearts ? "won" : ""}">${ICONS.heart}</i>`).join("")}</div><small>${session.completedAt ? "ЗАВЕРШЕНО" : "НЕ ЗАВЕРШЕНО"}</small></div></article>`;
+}
+
+function showProfileEditor() {
+  const modal = document.createElement("div");
+  modal.className = "profile-editor-layer";
+  modal.innerHTML = `<form class="player-create editor" data-profile-form><button type="button" class="editor-close" data-action="close-editor">×</button><small>НАСТРОЙКИ ПРОФИЛЯ</small><h2>Как тебя называть?</h2><label><span>Имя ученика</span><input name="studentName" maxlength="18" value="${progress.profile.name}" required></label><fieldset><legend>Герой профиля</legend><div class="avatar-picker">${["leo","mia","penny","archie"].map((name) => `<label><input type="radio" name="avatar" value="${name}" ${name === progress.profile.avatar ? "checked" : ""}><span><img src="${talkHero(name)}" alt="${name}"></span><b>${name[0].toUpperCase() + name.slice(1)}</b></label>`).join("")}</div></fieldset><button class="power-button compact" type="submit"><span>СОХРАНИТЬ</span>${ICONS.play}</button></form>`;
+  document.body.append(modal);
+}
+
 const greetingMissions = [
-  { npc: "mia", x: 27, scene: "morning", prompt: "Ты встретил Mia утром", phrase: "Good morning!", choices: ["Good night!", "Good morning!", "Goodbye!"] },
-  { npc: "penny", x: 67, scene: "day", prompt: "Penny машет тебе лапой", phrase: "Hello!", choices: ["Hello!", "Goodbye!", "My name is Penny."] },
-  { npc: "archie", x: 88, scene: "day", prompt: "Поздоровайся коротко и дружелюбно", phrase: "Hi!", choices: ["Nice to meet you!", "Hi!", "Good afternoon!"] },
-  { npc: "mia", x: 53, scene: "afternoon", prompt: "Уже день. Поприветствуй Mia", phrase: "Good afternoon!", choices: ["Good morning!", "Good afternoon!", "Goodbye!"] },
-  { npc: "penny", x: 19, scene: "afternoon", prompt: "Спроси, как зовут нового друга", phrase: "What's your name?", chunks: ["What's", "your", "name?"] },
-  { npc: "archie", x: 78, scene: "sunset", prompt: "Archie отвечает полным предложением", phrase: "My name is Archie.", chunks: ["My", "name", "is", "Archie."] },
-  { npc: "mia", x: 35, scene: "sunset", prompt: "Представься коротко", phrase: "I'm Leo.", chunks: ["I'm", "Leo."] },
-  { npc: "penny", x: 73, scene: "night", prompt: "Скажи: «Приятно познакомиться»", phrase: "Nice to meet you!", chunks: ["Nice", "to", "meet", "you!"] },
-  { npc: "archie", x: 45, scene: "night", prompt: "Пора уходить. Попрощайся", phrase: "Goodbye!", chunks: ["Goodbye!"] },
+  { location: "school", npc: "mia", speaker: "mia", line: "Good morning, Leo!", prompt: "Ты пришёл в школу утром. Ответь Mia.", target: "Good morning, Mia!", choices: ["Good morning, Mia!", "Goodbye, Mia!", "Good afternoon, Mia!"] },
+  { location: "cafe", npc: "penny", speaker: "penny", line: "Hello! I'm Penny.", prompt: "Penny представилась. Поздоровайся коротко.", target: "Hi, Penny!", choices: ["Goodbye, Penny!", "Hi, Penny!", "Good afternoon, Penny!"] },
+  { location: "fountain", npc: "archie", speaker: "archie", line: "Hi! What's your name?", prompt: "Новый друг спрашивает твоё имя.", target: "My name is Leo.", choices: ["What's your name?", "My name is Leo.", "Nice to meet you!"] },
+  { location: "library", npc: "penny", speaker: "narrator", line: "You meet a new friend.", prompt: "Теперь сам спроси имя Penny.", target: "What's your name?", chunks: ["What's", "your", "name?"] },
+  { location: "flowers", npc: "penny", speaker: "penny", line: "My name is Penny.", prompt: "Ответь вежливо после знакомства.", target: "Nice to meet you!", chunks: ["Nice", "to", "meet", "you!"] },
+  { location: "cafe", npc: "mia", speaker: "mia", line: "Good afternoon, Leo!", prompt: "После обеда ты снова встретил Mia.", target: "Good afternoon, Mia!", chunks: ["Good", "afternoon,", "Mia!"] },
+  { location: "fountain", npc: "archie", speaker: "archie", line: "Hello! I'm Archie.", prompt: "Представься так же коротко.", target: "I'm Leo.", choices: ["I'm Leo.", "My name?", "Goodbye!"] },
+  { location: "school", npc: "mia", speaker: "mia", line: "See you tomorrow, Leo!", prompt: "Фестиваль закончился. Попрощайся.", target: "Goodbye, Mia!", choices: ["Hello, Mia!", "Good morning!", "Goodbye, Mia!"] },
 ];
 
 function greetingLevel(index) {
-  if (index < 3) return { n: 1, name: "Узнай фразу" };
-  if (index < 6) return { n: 2, name: "Ответь в диалоге" };
-  return { n: 3, name: "Собери сам" };
+  if (index < 3) return { n: 1, name: "Ответь в ситуации" };
+  if (index < 6) return { n: 2, name: "Собери фразу" };
+  return { n: 3, name: "Диалог без подсказки" };
 }
 
 function startGreeting() {
-  state.greeting = { mission: 0, x: 8, build: [], score: 0, moving: false };
+  beginSession("greeting");
+  state.greeting = { mission: 0, build: [], score: 0, locked: false };
+  audio.setScene("greeting");
   renderGreeting();
 }
 
@@ -279,109 +465,48 @@ function renderGreeting() {
   clearGameLoops();
   state.screen = "greeting";
   const g = state.greeting;
-  if (g.mission >= greetingMissions.length) return renderFinish("greeting", "МАСТЕР ОБЩЕНИЯ", "Ты открыл все фразы Hello City!", g.score);
+  if (g.mission >= greetingMissions.length) return renderFinish("greeting", "МАСТЕР ОБЩЕНИЯ", "Ты прожил целый день в Hello City и уверенно поговорил со всеми героями!", g.score);
   const mission = greetingMissions[g.mission];
   const level = greetingLevel(g.mission);
-  app.innerHTML = `<main class="game-shell greeting-game ${mission.scene}">
+  const answerArea = mission.chunks ? `<div class="scene-build"><div class="build-line" data-build-line><span>Нажимай на слова по порядку</span></div><div class="word-bank">${[...mission.chunks].sort(() => Math.random() - .5).map((word) => `<button data-word="${word}">${word}</button>`).join("")}</div></div>` : `<div class="scene-answers">${mission.choices.map((choice) => `<button data-answer="${choice}"><span>${choice}</span>${ICONS.play}</button>`).join("")}</div>`;
+  app.innerHTML = `<main class="story-game location-${mission.location}" style="--story-bg:url('${world("hello-city")}')">
     ${header("HELLO CITY")}
-    <div class="mission-bar">
-      <div><small>УРОВЕНЬ ${level.n}</small><strong>${level.name}</strong></div>
-      <div class="mission-progress">${greetingMissions.map((_, i) => `<i class="${i < g.mission ? "done" : i === g.mission ? "now" : ""}"></i>`).join("")}</div>
-    </div>
-    <section class="walk-world" style="--player-x:${g.x};--target-x:${mission.x};--camera:${Math.max(0, g.x - 48)}">
-      <div class="city-layer city-back"><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="city-layer city-front"><span class="shop shop-a"><b>HELLO CAFE</b></span><span class="shop shop-b"><b>WORD LAB</b></span><span class="park-tree t1"></span><span class="park-tree t2"></span></div>
-      <div class="street"><span></span></div>
-      <div class="quest-beacon"><i></i><b>TALK</b></div>
-      <img class="npc-character" src="${hero(mission.npc)}" alt="${mission.npc}">
-      <div class="npc-name">${mission.npc.toUpperCase()}</div>
-      <img class="player-character" src="${hero("leo")}" alt="Leo">
-      <div class="player-shadow"></div>
-      <button class="talk-button" data-action="talk" disabled>${ICONS.sound}<span>ПОГОВОРИТЬ</span></button>
+    <div class="story-progress"><div><small>ЭПИЗОД ${g.mission + 1} ИЗ 8 • УРОВЕНЬ ${level.n}</small><strong>${level.name}</strong></div><div>${greetingMissions.map((_, i) => `<i class="${i < g.mission ? "done" : i === g.mission ? "now" : ""}"></i>`).join("")}</div></div>
+    <section class="story-stage">
+      <div class="story-ambient"><i></i><i></i><i></i><i></i></div>
+      <div class="scene-label"><small>СЕГОДНЯ В HELLO CITY</small><b>${mission.location === "school" ? "Школьный фестиваль" : mission.location === "cafe" ? "Уютное кафе" : mission.location === "library" ? "У библиотеки" : mission.location === "flowers" ? "Цветочная лавка" : "Городская площадь"}</b></div>
+      <img class="story-character story-leo" src="${talkHero("leo")}" alt="Leo"><img class="story-character story-npc" src="${talkHero(mission.npc)}" alt="${mission.npc}">
+      <div class="speech-bubble ${mission.speaker === "narrator" ? "narration" : ""}"><span>${mission.speaker === "narrator" ? "СИТУАЦИЯ" : mission.speaker.toUpperCase()}</span><strong>${mission.line}</strong><button data-action="repeat-dialogue">${ICONS.sound}</button></div>
+      <section class="story-console"><div class="story-prompt"><small>ТВОЯ РЕПЛИКА</small><h2>${mission.prompt}</h2></div>${answerArea}</section>
     </section>
-    <div class="walk-controls">
-      <button data-move="-1" aria-label="Идти влево">${ICONS.back}</button>
-      <div class="walk-hint"><b>Дойди до героя</b><span>Стрелки ← → или кнопки</span></div>
-      <button class="right" data-move="1" aria-label="Идти вправо">${ICONS.back}</button>
-    </div>
   </main>`;
-  bindWalkControls();
-  updateWalkPosition();
-}
-
-function bindWalkControls() {
-  document.querySelectorAll("[data-move]").forEach((button) => {
-    let interval;
-    const stop = () => { clearInterval(interval); state.greeting.moving = false; document.querySelector(".player-character")?.classList.remove("is-running"); };
-    button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      stepWalk(Number(button.dataset.move));
-      interval = setInterval(() => stepWalk(Number(button.dataset.move)), 90);
-    });
-    button.addEventListener("pointerup", stop);
-    button.addEventListener("pointerleave", stop);
-    button.addEventListener("pointercancel", stop);
-  });
-}
-
-function stepWalk(direction) {
-  if (state.screen !== "greeting" || document.querySelector(".dialogue-panel")) return;
-  state.greeting.x = Math.max(4, Math.min(94, state.greeting.x + direction * 2.3));
-  const player = document.querySelector(".player-character");
-  player?.classList.add("is-running");
-  player?.classList.toggle("face-left", direction < 0);
-  if (Math.round(state.greeting.x) % 6 === 0) audio.sfx("move");
-  updateWalkPosition();
-}
-
-function updateWalkPosition() {
-  const world = document.querySelector(".walk-world");
-  if (!world || !state.greeting) return;
-  const mission = greetingMissions[state.greeting.mission];
-  world.style.setProperty("--player-x", state.greeting.x);
-  world.style.setProperty("--camera", Math.max(0, state.greeting.x - 48));
-  const near = Math.abs(state.greeting.x - mission.x) < 7;
-  const talk = document.querySelector(".talk-button");
-  if (talk) talk.disabled = !near;
-  world.classList.toggle("is-near", near);
-}
-
-function openDialogue() {
-  const g = state.greeting;
-  const mission = greetingMissions[g.mission];
-  audio.sfx("talk");
-  audio.speak(mission.phrase);
-  const panel = document.createElement("div");
-  panel.className = "dialogue-panel";
-  const level = greetingLevel(g.mission);
-  const answerArea = mission.chunks
-    ? `<div class="phrase-build"><div class="build-line" data-build-line><span>Собери фразу</span></div><div class="word-bank">${[...mission.chunks].sort(() => Math.random() - 0.5).map((word) => `<button data-word="${word}">${word}</button>`).join("")}</div></div>`
-    : `<div class="dialogue-choices">${mission.choices.map((choice) => `<button data-answer="${choice}">${choice}<span>${ICONS.play}</span></button>`).join("")}</div>`;
-  panel.innerHTML = `<div class="dialogue-card"><button class="listen-phrase" data-speak="${mission.phrase}" aria-label="Послушать">${ICONS.sound}</button><small>МИССИЯ ${g.mission + 1} • УРОВЕНЬ ${level.n}</small><h2>${mission.prompt}</h2>${answerArea}</div>`;
-  document.querySelector(".greeting-game").append(panel);
+  state.timer = setTimeout(() => audio.speak(mission.line, mission.speaker), 380);
 }
 
 function greetingAnswer(answer, button) {
+  if (state.greeting.locked) return;
   const mission = greetingMissions[state.greeting.mission];
-  if (answer === mission.phrase) {
+  if (answer === mission.target) {
     button.classList.add("correct");
     completeGreetingMission();
   } else {
+    recordMistake();
     button.classList.add("wrong");
     audio.sfx("wrong");
-    toast("Почти! Послушай фразу ещё раз", "try");
-    audio.speak(mission.phrase);
-    setTimeout(() => button.classList.remove("wrong"), 550);
+    toast("Попробуй ещё раз — послушай разговор", "try");
+    audio.speak(mission.line, mission.speaker);
+    setTimeout(() => button.classList.remove("wrong"), 500);
   }
 }
 
 function greetingWord(word, button) {
+  if (state.greeting.locked) return;
   const g = state.greeting;
   const mission = greetingMissions[g.mission];
-  const expected = mission.chunks[g.build.length];
-  if (word !== expected) {
-    audio.sfx("wrong");
+  if (word !== mission.chunks[g.build.length]) {
+    recordMistake();
     button.classList.add("wrong");
+    audio.sfx("wrong");
     setTimeout(() => button.classList.remove("wrong"), 450);
     return;
   }
@@ -389,67 +514,65 @@ function greetingWord(word, button) {
   g.build.push(word);
   button.disabled = true;
   button.classList.add("used");
-  const line = document.querySelector("[data-build-line]");
-  line.innerHTML = g.build.map((chunk) => `<b>${chunk}</b>`).join("");
+  document.querySelector("[data-build-line]").innerHTML = g.build.map((chunk) => `<b>${chunk}</b>`).join("");
   if (g.build.length === mission.chunks.length) completeGreetingMission();
 }
 
 function completeGreetingMission() {
   const g = state.greeting;
-  const phrase = greetingMissions[g.mission].phrase;
+  const mission = greetingMissions[g.mission];
+  g.locked = true;
   g.score += 1;
-  addSparks(10);
-  audio.sfx("correct");
-  audio.speak(phrase);
-  burst(50, 44);
-  toast(`+10 искр • ${phrase}`);
+  addSparks(12);
+  recordTask(mission.target, 12);
+  document.querySelector(".story-leo")?.classList.add("is-speaking");
+  audio.speak(mission.target, "leo");
+  celebrate(mission.target, 12, "#ffdb55", "mia", false);
   g.mission += 1;
   g.build = [];
-  state.timer = setTimeout(renderGreeting, 1050);
+  state.timer = setTimeout(() => { g.locked = false; renderGreeting(); }, 1250);
 }
 
 const numberWords = ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX"];
-
-function startRunner() {
-  clearGameLoops();
-  state.runner = { wave: 0, lane: 1, distance: 0, last: 0, active: false, score: 0, combo: 0, sequence: [1, 2, 3, 4, 5, 6].sort(() => Math.random() - 0.5), gates: [] };
-  prepareRunnerWave();
+function runnerLevel(wave) {
+  if (wave < 2) return { n: 1, name: "Цифра и слово" };
+  if (wave < 4) return { n: 2, name: "Слово без цифры" };
+  return { n: 3, name: "Только на слух" };
 }
 
-function runnerLevel(wave) {
-  if (wave < 2) return { n: 1, name: "Цифра + слово", hint: "Смотри и слушай" };
-  if (wave < 4) return { n: 2, name: "Только слово", hint: "Вспомни цифру" };
-  return { n: 3, name: "На слух", hint: "Слушай команду" };
+function startRunner() {
+  beginSession("runner");
+  state.runner = { wave: 0, lane: 1, progress: 0, last: 0, active: false, score: 0, combo: 0, sequence: [1,2,3,4,5,6].sort(() => Math.random() - .5), gates: [] };
+  audio.setScene("runner");
+  prepareRunnerWave();
 }
 
 function prepareRunnerWave() {
   clearGameLoops();
-  const r = state.runner;
   state.screen = "runner";
-  if (r.wave >= 6) return renderFinish("runner", "КОРОЛЕВА СКОРОСТИ", "Penny собрала все числа от 1 до 6!", r.score);
+  const r = state.runner;
+  if (r.wave >= 6) return renderFinish("runner", "ЧЕМПИОН NUMBER RUSH", "Penny добежала до финиша и собрала все числа от 1 до 6!", r.score);
   const target = r.sequence[r.wave];
-  const wrong = [1, 2, 3, 4, 5, 6].filter((n) => n !== target).sort(() => Math.random() - 0.5).slice(0, 2);
-  r.gates = [target, ...wrong].sort(() => Math.random() - 0.5);
-  r.distance = -2;
+  const wrong = [1,2,3,4,5,6].filter((n) => n !== target).sort(() => Math.random() - .5).slice(0,2);
+  r.gates = [target, ...wrong].sort(() => Math.random() - .5);
+  r.progress = 0;
   r.active = false;
   const level = runnerLevel(r.wave);
-  const targetDisplay = level.n === 1 ? `<strong>${target}</strong><b>${numberWords[target - 1]}</b>` : level.n === 2 ? `<b>${numberWords[target - 1]}</b>` : `<span class="listen-waves">${ICONS.sound}</span><b>LISTEN!</b>`;
-  app.innerHTML = `<main class="game-shell runner-game">
+  const command = level.n === 1 ? `<strong>${target}</strong><b>${numberWords[target - 1]}</b>` : level.n === 2 ? `<b>${numberWords[target - 1]}</b>` : `<span>${ICONS.sound}</span><b>LISTEN!</b>`;
+  app.innerHTML = `<main class="runner-v3" style="--runner-bg:url('${world("number-world")}')">
     ${header("NUMBER RUSH")}
-    <div class="mission-bar runner-mission"><div><small>УРОВЕНЬ ${level.n}</small><strong>${level.name}</strong></div><div class="runner-score"><span>СЕРИЯ</span><b>${r.combo}</b></div></div>
-    <section class="runner-world">
-      <div class="runner-sky"><span></span><span></span><span></span></div>
-      <div class="runner-city"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="target-command"><small>ПОЙМАЙ</small>${targetDisplay}<button data-action="repeat-number" aria-label="Повторить">${ICONS.sound}</button></div>
-      <div class="speed-road"><div class="road-lines"></div>
-        ${r.gates.map((number, lane) => `<div class="number-gate lane-${lane}" data-gate><span>${number}</span><div class="gate-pips">${Array.from({ length: number }, () => "<i></i>").join("")}</div></div>`).join("")}
-        <div class="runner-avatar lane-pos-${r.lane}"><span class="runner-aura"></span><img src="${hero("penny")}" alt="Penny"></div>
-      </div>
-      <div class="runner-start-panel"><span>${ICONS.play}</span><h2>${level.hint}</h2><p>Перестраивай Penny между тремя дорожками</p><button data-action="runner-go">СТАРТ!</button></div>
+    <div class="runner-v3-bar"><div><small>ЭТАП ${r.wave + 1}/6 • УРОВЕНЬ ${level.n}</small><strong>${level.name}</strong></div><div><span>СЕРИЯ</span><b>${r.combo}</b></div></div>
+    <section class="race-stage">
+      <div class="race-speed"><i></i><i></i><i></i><i></i></div>
+      <div class="number-command"><small>НАЙДИ ДОРОЖКУ</small><div>${command}</div><button data-action="repeat-number">${ICONS.sound}</button></div>
+      <div class="gate-layer">${r.gates.map((number, lane) => `<div class="race-gate race-lane-${lane}" data-gate><span>${number}</span><div>${Array.from({ length: number }, () => `<i></i>`).join("")}</div></div>`).join("")}</div>
+      <div class="penny-runner lane-pos-${r.lane}"><span></span><img src="${BASE}assets/heroes-v3/penny-run.webp" alt="Penny"></div>
+      <div class="runner-guide"><div class="guide-step"><b>1</b><span>Послушай число</span></div><i></i><div class="guide-step"><b>2</b><span>Выбери дорожку</span></div><i></i><div class="guide-step"><b>3</b><span>Пройди ворота</span></div><button data-action="runner-go">НАЧАТЬ ЗАБЕГ</button></div>
+      <div class="race-countdown" aria-live="assertive"></div>
     </section>
-    <div class="lane-controls"><button data-lane-move="-1">${ICONS.back}<span>ВЛЕВО</span></button><div>${r.wave + 1}<small>/ 6</small></div><button class="right" data-lane-move="1"><span>ВПРАВО</span>${ICONS.back}</button></div>
+    <div class="lane-controls v3-controls"><button data-lane-move="-1">${ICONS.back}<span>ВЛЕВО</span></button><div class="lane-lights"><i></i><i class="active"></i><i></i></div><button class="right" data-lane-move="1"><span>ВПРАВО</span>${ICONS.back}</button></div>
   </main>`;
-  state.timer = setTimeout(() => audio.speak(numberWords[target - 1]), 250);
+  state.timer = setTimeout(() => audio.speak(numberWords[target - 1], "penny"), 350);
 }
 
 function moveLane(direction) {
@@ -458,36 +581,43 @@ function moveLane(direction) {
   const old = r.lane;
   r.lane = Math.max(0, Math.min(2, r.lane + direction));
   if (old === r.lane) return;
-  audio.sfx("whoosh");
-  const avatar = document.querySelector(".runner-avatar");
-  if (avatar) avatar.className = `runner-avatar lane-pos-${r.lane} is-dodging`;
+  audio.sfx("lane");
+  const runner = document.querySelector(".penny-runner");
+  if (runner) runner.className = `penny-runner lane-pos-${r.lane} is-switching`;
+  document.querySelectorAll(".lane-lights i").forEach((item, i) => item.classList.toggle("active", i === r.lane));
 }
 
 function runRunner() {
   const r = state.runner;
   if (!r || r.active) return;
-  audio.sfx("correct");
-  r.active = true;
-  r.last = performance.now();
-  document.querySelector(".runner-start-panel")?.classList.add("is-gone");
-  document.querySelector(".runner-world")?.classList.add("is-running");
-  const target = r.sequence[r.wave];
-  audio.speak(numberWords[target - 1]);
-  state.raf = requestAnimationFrame(runnerFrame);
+  document.querySelector(".runner-guide")?.classList.add("is-gone");
+  const count = document.querySelector(".race-countdown");
+  let value = 3;
+  count.textContent = value;
+  count.classList.add("show");
+  audio.sfx("tap");
+  const countdown = () => {
+    value -= 1;
+    if (value > 0) { count.textContent = value; audio.sfx("tap"); state.timer = setTimeout(countdown, 470); return; }
+    count.textContent = "GO!";
+    audio.sfx("finish");
+    state.timer = setTimeout(() => count.classList.remove("show"), 450);
+    r.active = true;
+    r.last = performance.now();
+    state.raf = requestAnimationFrame(runnerFrame);
+  };
+  state.timer = setTimeout(countdown, 470);
 }
 
 function runnerFrame(now) {
   const r = state.runner;
   if (!r?.active || state.screen !== "runner") return;
-  const dt = Math.min(32, now - r.last);
+  const delta = Math.min(35, now - r.last);
   r.last = now;
-  r.distance += dt * 0.032;
-  const scale = 0.5 + Math.max(0, r.distance) / 100 * 0.95;
-  document.querySelectorAll("[data-gate]").forEach((gate) => {
-    gate.style.setProperty("--gate-y", `${r.distance}%`);
-    gate.style.setProperty("--gate-scale", scale);
-  });
-  if (r.distance >= 83) return collideRunner();
+  r.progress += delta * .032;
+  document.querySelectorAll("[data-gate]").forEach((gate) => gate.style.setProperty("--race-progress", Math.min(1, r.progress / 100)));
+  document.querySelector(".race-stage")?.style.setProperty("--speed-progress", r.progress);
+  if (r.progress >= 100) return collideRunner();
   state.raf = requestAnimationFrame(runnerFrame);
 }
 
@@ -496,24 +626,26 @@ function collideRunner() {
   r.active = false;
   const chosen = r.gates[r.lane];
   const target = r.sequence[r.wave];
-  const gate = document.querySelector(`.number-gate.lane-${r.lane}`);
+  const gate = document.querySelector(`.race-gate.race-lane-${r.lane}`);
   if (chosen === target) {
     r.score += 1;
     r.combo += 1;
-    addSparks(12 + Math.min(8, r.combo * 2));
+    const reward = 14 + Math.min(8, r.combo * 2);
+    addSparks(reward);
+    recordTask(`${target} — ${numberWords[target - 1]}`, reward);
     gate?.classList.add("gate-correct");
-    document.querySelector(".runner-avatar")?.classList.add("is-jumping");
-    audio.sfx("correct");
-    burst(50, 66, "#67f5ff");
-    toast(`Верно: ${target} — ${numberWords[target - 1]}!`);
+    document.querySelector(".penny-runner")?.classList.add("is-jumping");
+    celebrate(`${target} — ${numberWords[target - 1]}`, reward, "#63efff", "penny");
   } else {
     r.combo = 0;
+    recordMistake();
     gate?.classList.add("gate-wrong");
     audio.sfx("wrong");
-    toast(`Это ${numberWords[chosen - 1]}. Нужна ${numberWords[target - 1]}`, "try");
+    toast(`Это ${numberWords[chosen - 1]}. Нужно ${numberWords[target - 1]}`, "try");
+    audio.speak(numberWords[target - 1], "penny");
   }
   r.wave += 1;
-  state.timer = setTimeout(prepareRunnerWave, 1200);
+  state.timer = setTimeout(prepareRunnerWave, 1300);
 }
 
 const colors = [
@@ -522,42 +654,40 @@ const colors = [
   { name: "PURPLE", hex: "#9b5cff" }, { name: "ORANGE", hex: "#ff8a32" },
 ];
 
-function startPaint() {
-  state.paint = { round: 0, score: 0, combo: 0, order: [...colors].sort(() => Math.random() - 0.5), locked: false };
-  preparePaintRound();
-}
-
 function paintLevel(round) {
-  if (round < 2) return { n: 1, name: "Слово + цвет" };
+  if (round < 2) return { n: 1, name: "Слово и цвет" };
   if (round < 4) return { n: 2, name: "Только слово" };
   return { n: 3, name: "Команда на слух" };
 }
 
+function startPaint() {
+  beginSession("paint");
+  state.paint = { round: 0, score: 0, combo: 0, order: [...colors].sort(() => Math.random() - .5), locked: false };
+  audio.setScene("paint");
+  preparePaintRound();
+}
+
 function preparePaintRound() {
   clearGameLoops();
-  const p = state.paint;
   state.screen = "paint";
-  if (p.round >= 6) return renderFinish("paint", "ПОВЕЛИТЕЛЬ ЦВЕТА", "Mia вернула English Town все краски!", p.score);
+  const p = state.paint;
+  if (p.round >= 6) return renderFinish("paint", "МАСТЕР COLORWORKS", "Mia вернула волшебному городу все шесть цветов!", p.score);
   p.locked = false;
   const target = p.order[p.round];
-  const decoys = colors.filter((c) => c.name !== target.name).sort(() => Math.random() - 0.5).slice(0, 2);
-  const drones = [target, ...decoys].sort(() => Math.random() - 0.5);
+  const decoys = colors.filter((color) => color.name !== target.name).sort(() => Math.random() - .5).slice(0,2);
+  const spirits = [target, ...decoys].sort(() => Math.random() - .5);
   const level = paintLevel(p.round);
-  const command = level.n === 1
-    ? `<b style="--command-color:${target.hex}">${target.name}</b><i style="background:${target.hex}"></i>`
-    : level.n === 2 ? `<b>${target.name}</b>` : `<span>${ICONS.sound}</span><b>LISTEN!</b>`;
-  app.innerHTML = `<main class="game-shell paint-game">
-    ${header("COLOR BLASTER")}
-    <div class="mission-bar paint-mission"><div><small>УРОВЕНЬ ${level.n}</small><strong>${level.name}</strong></div><div class="runner-score"><span>СЕРИЯ</span><b>${p.combo}</b></div></div>
-    <section class="paint-arena" data-paint-arena>
-      <div class="paint-space"><i></i><i></i><i></i><i></i></div>
-      <div class="paint-command"><small>НАЙДИ ЦВЕТ</small><div>${command}</div><button data-action="repeat-color">${ICONS.sound}</button></div>
-      <div class="drone-field">
-        ${drones.map((color, index) => `<button class="color-drone drone-${index}" data-color-target="${color.name}" style="--drone-color:${color.hex};--delay:${index * -0.7}s" aria-label="${color.name}"><span class="drone-wing left"></span><span class="drone-body"><i></i><b></b></span><span class="drone-wing right"></span><em></em></button>`).join("")}
-      </div>
-      <div class="mia-platform"><span class="platform-ring"></span><img src="${hero("mia")}" alt="Mia"><div class="blaster-glow"></div></div>
-      <div class="crosshair" aria-hidden="true"><i></i></div>
-      <div class="paint-tip"><b>НАВЕДИ И ВЫСТРЕЛИ</b><span>Нажми на правильную цветовую сферу</span></div>
+  const command = level.n === 1 ? `<b style="--command-color:${target.hex}">${target.name}</b><i style="background:${target.hex}"></i>` : level.n === 2 ? `<b>${target.name}</b>` : `<span>${ICONS.sound}</span><b>LISTEN!</b>`;
+  app.innerHTML = `<main class="paint-v3" style="--paint-bg:url('${world("color-world")}')">
+    ${header("COLORWORKS")}
+    <div class="paint-v3-bar"><div><small>СФЕРА ${p.round + 1}/6 • УРОВЕНЬ ${level.n}</small><strong>${level.name}</strong></div><div><span>СЕРИЯ</span><b>${p.combo}</b></div></div>
+    <section class="color-arena" data-paint-arena>
+      <div class="color-dust"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="color-command"><small>ЗАРЯДИ ЦВЕТ</small><div>${command}</div><button data-action="repeat-color">${ICONS.sound}</button></div>
+      <div class="spirit-field">${spirits.map((color, index) => `<button class="color-spirit spirit-${index}" data-color-target="${color.name}" style="--spirit-color:${color.hex};--spirit-delay:${index * -.8}s" aria-label="${color.name}"><span class="spirit-ring r1"></span><span class="spirit-ring r2"></span><span class="spirit-shell"><i></i><b></b><em></em></span><span class="spirit-trail"></span></button>`).join("")}</div>
+      <div class="mia-shooter"><span></span><img src="${actionHero("mia")}" alt="Mia"><i></i></div>
+      <div class="v3-crosshair"><i></i></div>
+      <div class="blaster-instruction"><small>МИССИЯ</small><b>Найди нужную цветовую сферу</b><span>Наведи прицел и нажми, чтобы выстрелить</span></div>
     </section>
     <div class="paint-rounds">${colors.map((_, i) => `<i class="${i < p.round ? "done" : i === p.round ? "now" : ""}"></i>`).join("")}</div>
   </main>`;
@@ -567,7 +697,7 @@ function preparePaintRound() {
     arena.style.setProperty("--aim-x", `${event.clientX - rect.left}px`);
     arena.style.setProperty("--aim-y", `${event.clientY - rect.top}px`);
   });
-  state.timer = setTimeout(() => audio.speak(target.name), 300);
+  state.timer = setTimeout(() => audio.speak(target.name, "mia", { rate: .82, pitch: 1.08 }), 350);
 }
 
 function shootColor(button) {
@@ -577,62 +707,49 @@ function shootColor(button) {
   const chosen = button.dataset.colorTarget;
   audio.sfx("shot");
   const arena = document.querySelector("[data-paint-arena]");
-  const a = arena.getBoundingClientRect();
-  const b = button.getBoundingClientRect();
+  const arenaRect = arena.getBoundingClientRect();
+  const targetRect = button.getBoundingClientRect();
   const shot = document.createElement("i");
-  shot.className = "paint-shot";
-  shot.style.setProperty("--shot-color", colors.find((c) => c.name === chosen).hex);
-  shot.style.setProperty("--sx", "20%");
-  shot.style.setProperty("--sy", "72%");
-  shot.style.setProperty("--tx", `${b.left + b.width / 2 - a.left}px`);
-  shot.style.setProperty("--ty", `${b.top + b.height / 2 - a.top}px`);
+  shot.className = "v3-paint-shot";
+  shot.style.setProperty("--shot-color", colors.find((color) => color.name === chosen).hex);
+  shot.style.setProperty("--tx", `${targetRect.left + targetRect.width / 2 - arenaRect.left}px`);
+  shot.style.setProperty("--ty", `${targetRect.top + targetRect.height / 2 - arenaRect.top}px`);
   arena.append(shot);
-  setTimeout(() => shot.remove(), 520);
-  document.querySelector(".mia-platform img")?.classList.add("is-firing");
-  setTimeout(() => document.querySelector(".mia-platform img")?.classList.remove("is-firing"), 350);
+  document.querySelector(".mia-shooter img")?.classList.add("is-firing");
+  setTimeout(() => { shot.remove(); document.querySelector(".mia-shooter img")?.classList.remove("is-firing"); }, 560);
   if (chosen === target.name) {
     p.locked = true;
     p.score += 1;
     p.combo += 1;
-    addSparks(12 + Math.min(8, p.combo * 2));
-    button.classList.add("drone-hit");
-    audio.sfx("correct");
-    burst(50, 38, target.hex);
-    toast(`${target.name}! Точное попадание!`);
+    const reward = 14 + Math.min(8, p.combo * 2);
+    addSparks(reward);
+    recordTask(target.name, reward);
+    button.classList.add("spirit-hit");
+    celebrate(`${target.name}! Точное попадание!`, reward, target.hex, "mia");
     p.round += 1;
-    state.timer = setTimeout(preparePaintRound, 1150);
+    state.timer = setTimeout(preparePaintRound, 1300);
   } else {
     p.combo = 0;
-    button.classList.add("drone-miss");
+    recordMistake();
+    button.classList.add("spirit-miss");
     audio.sfx("wrong");
     toast(`Это ${chosen}. Ищи ${target.name}`, "try");
-    audio.speak(target.name);
-    setTimeout(() => button.classList.remove("drone-miss"), 600);
+    audio.speak(target.name, "mia", { rate: .8, pitch: 1.08 });
+    setTimeout(() => button.classList.remove("spirit-miss"), 650);
   }
 }
 
 function renderFinish(id, title, text, score) {
   clearGameLoops();
   state.screen = "finish";
+  const total = GAME_META[id].total;
+  const hearts = finishSession(score, total);
   awardBadge(id);
   addSparks(50);
+  audio.setScene("hub");
   audio.sfx("finish");
-  const stars = score >= 6 ? 3 : score >= 4 ? 2 : 1;
-  app.innerHTML = `<main class="finish-screen finish-${id}">
-    ${header("MISSION COMPLETE")}
-    <div class="finish-rays"></div>
-    <section class="finish-card">
-      <div class="badge-orbit"><i></i><i></i><i></i><span>${ICONS.spark}</span></div>
-      <small>НОВЫЙ ЗНАЧОК МИРА</small>
-      <h1>${title}</h1>
-      <p>${text}</p>
-      <div class="finish-stars">${[1, 2, 3].map((n) => `<span class="${n <= stars ? "won" : ""}">${ICONS.spark}</span>`).join("")}</div>
-      <div class="finish-reward"><b>+50</b><span>бонусных искр</span></div>
-      <div class="finish-actions"><button class="ghost-button" data-action="replay" data-game="${id}">ЕЩЁ РАЗ</button><button class="power-button compact" data-action="home"><span>НА КАРТУ</span>${ICONS.play}</button></div>
-    </section>
-    <img class="finish-hero" src="${hero(id === "runner" ? "penny" : id === "paint" ? "mia" : "archie")}" alt="Герой игры">
-  </main>`;
-  burst(50, 45, id === "paint" ? "#ff55be" : "#65f4ff");
+  app.innerHTML = `<main class="finish-screen finish-${id}">${header("МИССИЯ ВЫПОЛНЕНА")}<div class="finish-rays"></div><section class="finish-card"><div class="badge-orbit"><i></i><i></i><i></i><span>${ICONS.spark}</span></div><small>НОВЫЙ РЕЗУЛЬТАТ В ПРОФИЛЕ</small><h1>${title}</h1><p>${text}</p><div class="finish-hearts">${[1,2,3].map((n) => `<span class="${n <= hearts ? "won" : ""}">${ICONS.heart}</span>`).join("")}</div><div class="finish-reward"><b>+50</b><span>бонусных искр</span></div><div class="finish-actions"><button class="ghost-button" data-action="profile">ПОСМОТРЕТЬ ПРОФИЛЬ</button><button class="power-button compact" data-action="home"><span>НА КАРТУ</span>${ICONS.play}</button></div></section><img class="finish-hero" src="${id === "runner" ? `${BASE}assets/heroes-v3/penny-run.webp` : id === "paint" ? actionHero("mia") : talkHero("archie")}" alt="Герой игры"></main>`;
+  burst(50,45,id === "paint" ? "#ff55be" : "#65f4ff");
 }
 
 function routeGame(id) {
@@ -642,42 +759,52 @@ function routeGame(id) {
   if (id === "paint") startPaint();
 }
 
+app.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-profile-form]");
+  if (!form) return;
+  event.preventDefault();
+  const data = new FormData(form);
+  progress.profile.name = String(data.get("studentName") || "").trim().slice(0,18);
+  progress.profile.avatar = String(data.get("avatar") || "leo");
+  progress.profile.createdAt ||= new Date().toISOString();
+  if (!progress.profile.name) return;
+  saveProgress();
+  document.querySelector(".profile-editor-layer")?.remove();
+  await audio.unlock();
+  audio.sfx("profile");
+  renderHome();
+});
+
 app.addEventListener("click", async (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   const game = event.target.closest("[data-game]")?.dataset.game;
   const answer = event.target.closest("[data-answer]");
   const word = event.target.closest("[data-word]");
-  const speak = event.target.closest("[data-speak]");
   const colorTarget = event.target.closest("[data-color-target]");
   const laneMove = event.target.closest("[data-lane-move]");
-
-  if (action === "enter-world") { await audio.unlock(); audio.sfx("finish"); renderHome(); return; }
-  if (action === "home") { audio.sfx("tap"); renderHome(); return; }
+  if (action === "enter-world") { await audio.unlock(); audio.sfx("profile"); renderHome(); return; }
+  if (action === "home") { renderHome(); return; }
+  if (action === "profile") { audio.sfx("profile"); renderProfile(); return; }
+  if (action === "edit-profile") { showProfileEditor(); return; }
+  if (action === "close-editor") { event.target.closest(".profile-editor-layer")?.remove(); return; }
   if (action === "sound") { await audio.unlock(); audio.toggle(); return; }
-  if (action === "talk") { openDialogue(); return; }
+  if (action === "repeat-dialogue") { const mission = greetingMissions[state.greeting.mission]; audio.speak(mission.line, mission.speaker); return; }
   if (action === "runner-go") { runRunner(); return; }
-  if (action === "repeat-number") { audio.speak(numberWords[state.runner.sequence[state.runner.wave] - 1]); return; }
-  if (action === "repeat-color") { audio.speak(state.paint.order[state.paint.round].name); return; }
-  if (action === "replay") { routeGame(event.target.closest("[data-game]").dataset.game); return; }
+  if (action === "repeat-number") { audio.speak(numberWords[state.runner.sequence[state.runner.wave] - 1], "penny"); return; }
+  if (action === "repeat-color") { audio.speak(state.paint.order[state.paint.round].name, "mia", { rate: .82, pitch: 1.08 }); return; }
   if (game) { routeGame(game); return; }
   if (answer) { greetingAnswer(answer.dataset.answer, answer); return; }
   if (word) { greetingWord(word.dataset.word, word); return; }
-  if (speak) { audio.speak(speak.dataset.speak); audio.sfx("talk"); return; }
   if (laneMove) { moveLane(Number(laneMove.dataset.laneMove)); return; }
   if (colorTarget) shootColor(colorTarget);
 });
 
 window.addEventListener("keydown", (event) => {
-  if (state.screen === "greeting" && ["ArrowLeft", "ArrowRight", "a", "d"].includes(event.key)) {
+  if (state.screen === "runner" && ["ArrowLeft","ArrowRight","a","d"].includes(event.key)) {
     event.preventDefault();
-    stepWalk(["ArrowLeft", "a"].includes(event.key) ? -1 : 1);
+    moveLane(["ArrowLeft","a"].includes(event.key) ? -1 : 1);
   }
-  if (state.screen === "runner" && ["ArrowLeft", "ArrowRight", "a", "d"].includes(event.key)) {
-    event.preventDefault();
-    moveLane(["ArrowLeft", "a"].includes(event.key) ? -1 : 1);
-  }
-  if (state.screen === "runner" && (event.key === " " || event.key === "Enter")) runRunner();
-  if (state.screen === "greeting" && event.key === "Enter" && !document.querySelector(".talk-button")?.disabled) openDialogue();
+  if (state.screen === "runner" && [" ","Enter"].includes(event.key)) runRunner();
 });
 
 renderStart();

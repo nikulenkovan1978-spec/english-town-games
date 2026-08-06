@@ -9,6 +9,7 @@ VISUAL_DESIGN_SPEC.md
 diag*.png
 site-check.png
 .codex-testshots/
+.codex-v3shots/
 public/assets/heroes/*.png
 
 # Operating system and editor files
