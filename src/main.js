@@ -22,6 +22,12 @@ const GAME_META = {
   paint: { title: "Color Blaster", color: "#a969ff", total: 6 },
 };
 
+const GAME_HELP = {
+  greeting: { icon: "💬", title: "Как играть в Hello City", steps: ["Послушай, что говорит герой.", "Выбери правильный ответ или собери фразу по порядку.", "Нажми на динамик, чтобы услышать реплику ещё раз."], tip: "Сначала дослушай всю фразу, затем отвечай." },
+  runner: { icon: "🐾", title: "Как играть в Number Rush", steps: ["Послушай целое английское слово-число.", "Стрелками на экране или клавишами ← → выбери дорожку.", "Нажми «Начать забег» и проведи Penny через правильные ворота."], tip: "На последних этапах ориентируйся только на слух." },
+  paint: { icon: "🎨", title: "Как играть в Colorworks", steps: ["Послушай название цвета целиком.", "Найди сферу нужного цвета.", "Наведи прицел и нажми на сферу, чтобы выстрелить."], tip: "Динамик повторяет слово сколько угодно раз." },
+};
+
 const oldProgress = JSON.parse(localStorage.getItem("englishTownV2") || "null");
 const savedProgress = JSON.parse(localStorage.getItem("englishTownV3") || "null");
 const progress = savedProgress || {
@@ -257,29 +263,56 @@ class SoundStudio {
     if (!english.length) return null;
     const preferences = {
       leo: ["Ryan", "Guy", "Andrew", "Christopher", "Daniel", "Male"],
-      mia: ["Ava", "Jenny", "Aria", "Samantha", "Sonia", "Female"],
+      mia: ["Jenny", "Aria", "Ava", "Samantha", "Sonia", "Zira", "Female"],
       penny: ["Jenny", "Aria", "Ava", "Samantha", "Female"],
       archie: ["Ryan", "Guy", "Andrew", "Daniel", "Male"],
       narrator: ["Ava", "Aria", "Jenny", "Samantha", "Female"],
     };
-    const natural = ["Natural", "Online", "Neural", ...preferences[character] || preferences.narrator];
-    return english.sort((a, b) => natural.reduce((score, term, index) => score + (b.name.includes(term) ? 50 - index : 0) - (a.name.includes(term) ? 50 - index : 0), 0))[0];
+    const wanted = preferences[character] || preferences.narrator;
+    const score = (voice) => {
+      const name = voice.name.toLowerCase();
+      let points = voice.localService ? 2 : 0;
+      if (name.includes("natural")) points += 45;
+      if (name.includes("neural")) points += 40;
+      if (name.includes("online")) points += 20;
+      // Character/gender matches matter more than the generic "Natural" label.
+      wanted.forEach((term, index) => { if (name.includes(term.toLowerCase())) points += 150 - index * 8; });
+      return points;
+    };
+    return [...english].sort((a, b) => score(b) - score(a))[0];
   }
 
   speak(text, character = "narrator", options = {}) {
     if (!progress.sound || !("speechSynthesis" in window)) return;
     speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text.replace(/[★]/g, ""));
+    const cleanText = text.replace(/[★]/g, "").trim();
+    // Some engines spell uppercase teaching cards as initialisms. Speech always
+    // receives a normal English word while the card remains uppercase visually.
+    const normalizedText = /^[A-Z]+(?:[ -][A-Z]+)*[.!?]?$/.test(cleanText) ? cleanText.toLocaleLowerCase("en-US") : cleanText;
+    // Several Windows voices interpret the short name "Mia" as the initialism
+    // M-I-A. The phonetic spelling is only sent to TTS; the screen still says Mia.
+    const spokenText = normalizedText.replace(/\bMia\b/gi, "Mee-yah");
+    const utterance = new SpeechSynthesisUtterance(spokenText);
     utterance.lang = "en-US";
     utterance.voice = this.chooseVoice(character);
     const settings = {
-      leo: { rate: .9, pitch: 1.16 }, mia: { rate: .88, pitch: 1.12 },
-      penny: { rate: .9, pitch: 1.2 }, archie: { rate: .91, pitch: 1.18 }, narrator: { rate: .86, pitch: 1.04 },
+      leo: { rate: .94, pitch: 1.12 }, mia: { rate: .92, pitch: 1.24 },
+      penny: { rate: .9, pitch: 1.32 }, archie: { rate: .92, pitch: 1.24 }, narrator: { rate: .91, pitch: 1.03 },
     }[character] || { rate: .88, pitch: 1.08 };
     utterance.rate = options.rate || settings.rate;
     utterance.pitch = options.pitch || settings.pitch;
     utterance.volume = .95;
+    utterance.onstart = () => {
+      const selector = character === "leo" ? ".story-leo" : `.story-npc[alt="${character}"]`;
+      document.querySelector(selector)?.classList.add("is-speaking");
+    };
+    utterance.onend = () => {
+      document.querySelectorAll(".story-character.is-speaking").forEach((el) => el.classList.remove("is-speaking"));
+      options.onend?.();
+    };
+    utterance.onerror = () => document.querySelectorAll(".story-character.is-speaking").forEach((el) => el.classList.remove("is-speaking"));
     speechSynthesis.speak(utterance);
+    return true;
   }
 
   toggle() {
@@ -351,11 +384,21 @@ function header(title = "ADVENTURES", showBack = true) {
   return `<header class="game-header v3-header">
     ${showBack ? `<button class="round-button back-button" data-action="home" aria-label="На главную">${ICONS.back}</button>` : `<div class="header-mark">ET</div>`}
     <div class="mini-logo"><span>ENGLISH TOWN</span><strong>${title}</strong></div>
+    ${GAME_HELP[state.screen] ? `<button class="how-button" data-action="instructions" aria-label="Как играть"><b>?</b><span>КАК ИГРАТЬ</span></button>` : ""}
     <button class="profile-chip" data-action="profile"><span><img src="${avatarSource()}" alt=""></span><b>${profileName}</b></button>
     <div class="hud-pill heart-hud">${ICONS.heart}<strong data-heart-count>${progress.hearts}</strong></div>
     <div class="hud-pill spark-hud">${ICONS.spark}<strong data-spark-count>${progress.sparks}</strong></div>
     <button class="round-button sound-button ${progress.sound ? "" : "is-muted"}" data-action="sound" aria-label="Звук">${ICONS.sound}</button>
   </header>`;
+}
+
+function showInstructions(game = state.screen) {
+  const help = GAME_HELP[game];
+  if (!help) return;
+  const modal = document.createElement("div");
+  modal.className = "help-layer";
+  modal.innerHTML = `<section class="help-card" role="dialog" aria-modal="true" aria-labelledby="help-title"><button class="help-close" data-action="close-instructions" aria-label="Закрыть">×</button><div class="help-icon">${help.icon}</div><small>ИНСТРУКЦИЯ</small><h2 id="help-title">${help.title}</h2><ol>${help.steps.map((step, i) => `<li><b>${i + 1}</b><span>${step}</span></li>`).join("")}</ol><p>💡 ${help.tip}</p><button class="power-button compact" data-action="close-instructions"><span>ВСЁ ПОНЯТНО!</span>${ICONS.play}</button></section>`;
+  app.append(modal);
 }
 
 function renderHeaderState() {
@@ -378,6 +421,7 @@ function renderStart() {
       <label><span>Имя ученика</span><input name="studentName" maxlength="18" autocomplete="given-name" placeholder="Напиши своё имя" required></label>
       <fieldset><legend>Выбери героя профиля</legend><div class="avatar-picker">${["leo","mia","penny","archie"].map((name, index) => `<label><input type="radio" name="avatar" value="${name}" ${index === 0 ? "checked" : ""}><span><img src="${talkHero(name)}" alt="${name}"></span><b>${name[0].toUpperCase() + name.slice(1)}</b></label>`).join("")}</div></fieldset>
       <button class="power-button" type="submit"><span class="power-icon">${ICONS.play}</span><span><b>СОЗДАТЬ ПРОФИЛЬ</b><small>и войти со звуком</small></span></button>
+      <button class="gate-music-button" type="button" data-action="preview-music">♫ ВКЛЮЧИТЬ МУЗЫКУ</button>
     </form>`;
   app.innerHTML = `<main class="sound-gate v3-gate">
     <div class="gate-sky"><i></i><i></i><i></i></div>
@@ -434,7 +478,7 @@ function showProfileEditor() {
   const modal = document.createElement("div");
   modal.className = "profile-editor-layer";
   modal.innerHTML = `<form class="player-create editor" data-profile-form><button type="button" class="editor-close" data-action="close-editor">×</button><small>НАСТРОЙКИ ПРОФИЛЯ</small><h2>Как тебя называть?</h2><label><span>Имя ученика</span><input name="studentName" maxlength="18" value="${progress.profile.name}" required></label><fieldset><legend>Герой профиля</legend><div class="avatar-picker">${["leo","mia","penny","archie"].map((name) => `<label><input type="radio" name="avatar" value="${name}" ${name === progress.profile.avatar ? "checked" : ""}><span><img src="${talkHero(name)}" alt="${name}"></span><b>${name[0].toUpperCase() + name.slice(1)}</b></label>`).join("")}</div></fieldset><button class="power-button compact" type="submit"><span>СОХРАНИТЬ</span>${ICONS.play}</button></form>`;
-  document.body.append(modal);
+  app.append(modal);
 }
 
 const greetingMissions = [
@@ -472,15 +516,16 @@ function renderGreeting() {
   app.innerHTML = `<main class="story-game location-${mission.location}" style="--story-bg:url('${world("hello-city")}')">
     ${header("HELLO CITY")}
     <div class="story-progress"><div><small>ЭПИЗОД ${g.mission + 1} ИЗ 8 • УРОВЕНЬ ${level.n}</small><strong>${level.name}</strong></div><div>${greetingMissions.map((_, i) => `<i class="${i < g.mission ? "done" : i === g.mission ? "now" : ""}"></i>`).join("")}</div></div>
-    <section class="story-stage">
+    <section class="story-stage ${g.mission === 0 ? "scene-opening" : ""}">
       <div class="story-ambient"><i></i><i></i><i></i><i></i></div>
-      <div class="scene-label"><small>СЕГОДНЯ В HELLO CITY</small><b>${mission.location === "school" ? "Школьный фестиваль" : mission.location === "cafe" ? "Уютное кафе" : mission.location === "library" ? "У библиотеки" : mission.location === "flowers" ? "Цветочная лавка" : "Городская площадь"}</b></div>
+      <div class="scene-label"><small>МЕСТО ВСТРЕЧИ</small><b>${mission.location === "school" ? "У школы" : mission.location === "cafe" ? "В городском кафе" : mission.location === "library" ? "Возле библиотеки" : mission.location === "flowers" ? "У цветочной лавки" : "На городской площади"}</b></div>
       <img class="story-character story-leo" src="${talkHero("leo")}" alt="Leo"><img class="story-character story-npc" src="${talkHero(mission.npc)}" alt="${mission.npc}">
       <div class="speech-bubble ${mission.speaker === "narrator" ? "narration" : ""}"><span>${mission.speaker === "narrator" ? "СИТУАЦИЯ" : mission.speaker.toUpperCase()}</span><strong>${mission.line}</strong><button data-action="repeat-dialogue">${ICONS.sound}</button></div>
       <section class="story-console"><div class="story-prompt"><small>ТВОЯ РЕПЛИКА</small><h2>${mission.prompt}</h2></div>${answerArea}</section>
     </section>
   </main>`;
-  state.timer = setTimeout(() => audio.speak(mission.line, mission.speaker), 380);
+  if (g.mission === 0) setTimeout(() => document.querySelector(".story-stage.scene-opening")?.classList.remove("scene-opening"), 900);
+  state.timer = setTimeout(() => audio.speak(mission.line, mission.speaker), g.mission === 0 ? 1050 : 380);
 }
 
 function greetingAnswer(answer, button) {
@@ -526,11 +571,20 @@ function completeGreetingMission() {
   addSparks(12);
   recordTask(mission.target, 12);
   document.querySelector(".story-leo")?.classList.add("is-speaking");
-  audio.speak(mission.target, "leo");
   celebrate(mission.target, 12, "#ffdb55", "mia", false);
   g.mission += 1;
   g.build = [];
-  state.timer = setTimeout(() => { g.locked = false; renderGreeting(); }, 1250);
+  let movedOn = false;
+  const nextMission = () => {
+    if (movedOn) return;
+    movedOn = true;
+    clearTimeout(state.timer);
+    g.locked = false;
+    renderGreeting();
+  };
+  const speaking = audio.speak(mission.target, "leo", { onend: () => setTimeout(nextMission, 280) });
+  // Fallback for muted sound or a speech engine that does not report completion.
+  state.timer = setTimeout(nextMission, speaking ? 4200 : 1450);
 }
 
 const numberWords = ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX"];
@@ -572,7 +626,7 @@ function prepareRunnerWave() {
     </section>
     <div class="lane-controls v3-controls"><button data-lane-move="-1">${ICONS.back}<span>ВЛЕВО</span></button><div class="lane-lights"><i></i><i class="active"></i><i></i></div><button class="right" data-lane-move="1"><span>ВПРАВО</span>${ICONS.back}</button></div>
   </main>`;
-  state.timer = setTimeout(() => audio.speak(numberWords[target - 1], "penny"), 350);
+  state.timer = setTimeout(() => audio.speak(numberWords[target - 1].toLowerCase(), "penny"), 350);
 }
 
 function moveLane(direction) {
@@ -591,6 +645,7 @@ function runRunner() {
   const r = state.runner;
   if (!r || r.active) return;
   document.querySelector(".runner-guide")?.classList.add("is-gone");
+  document.querySelector(".race-stage")?.classList.add("is-counting");
   const count = document.querySelector(".race-countdown");
   let value = 3;
   count.textContent = value;
@@ -601,6 +656,8 @@ function runRunner() {
     if (value > 0) { count.textContent = value; audio.sfx("tap"); state.timer = setTimeout(countdown, 470); return; }
     count.textContent = "GO!";
     audio.sfx("finish");
+    document.querySelector(".race-stage")?.classList.remove("is-counting");
+    document.querySelector(".race-stage")?.classList.add("is-running");
     state.timer = setTimeout(() => count.classList.remove("show"), 450);
     r.active = true;
     r.last = performance.now();
@@ -642,7 +699,7 @@ function collideRunner() {
     gate?.classList.add("gate-wrong");
     audio.sfx("wrong");
     toast(`Это ${numberWords[chosen - 1]}. Нужно ${numberWords[target - 1]}`, "try");
-    audio.speak(numberWords[target - 1], "penny");
+    audio.speak(numberWords[target - 1].toLowerCase(), "penny");
   }
   r.wave += 1;
   state.timer = setTimeout(prepareRunnerWave, 1300);
@@ -697,7 +754,7 @@ function preparePaintRound() {
     arena.style.setProperty("--aim-x", `${event.clientX - rect.left}px`);
     arena.style.setProperty("--aim-y", `${event.clientY - rect.top}px`);
   });
-  state.timer = setTimeout(() => audio.speak(target.name, "mia", { rate: .82, pitch: 1.08 }), 350);
+  state.timer = setTimeout(() => audio.speak(target.name.toLowerCase(), "mia"), 350);
 }
 
 function shootColor(button) {
@@ -715,8 +772,18 @@ function shootColor(button) {
   shot.style.setProperty("--tx", `${targetRect.left + targetRect.width / 2 - arenaRect.left}px`);
   shot.style.setProperty("--ty", `${targetRect.top + targetRect.height / 2 - arenaRect.top}px`);
   arena.append(shot);
+  const paintTrail = document.createElement("div");
+  paintTrail.className = "paint-trail";
+  paintTrail.style.setProperty("--shot-color", colors.find((color) => color.name === chosen).hex);
+  paintTrail.style.setProperty("--tx", `${targetRect.left + targetRect.width / 2 - arenaRect.left}px`);
+  paintTrail.style.setProperty("--ty", `${targetRect.top + targetRect.height / 2 - arenaRect.top}px`);
+  paintTrail.style.setProperty("--dx", `${targetRect.left + targetRect.width / 2 - arenaRect.left - arenaRect.width * .2}px`);
+  paintTrail.style.setProperty("--dy", `${targetRect.top + targetRect.height / 2 - arenaRect.top - arenaRect.height * .68}px`);
+  paintTrail.innerHTML = Array.from({ length: 8 }, (_, i) => `<i style="--drop:${i}"></i>`).join("");
+  arena.append(paintTrail);
   document.querySelector(".mia-shooter img")?.classList.add("is-firing");
-  setTimeout(() => { shot.remove(); document.querySelector(".mia-shooter img")?.classList.remove("is-firing"); }, 560);
+  setTimeout(() => { shot.remove(); paintTrail.classList.add("is-splash"); document.querySelector(".mia-shooter img")?.classList.remove("is-firing"); }, 520);
+  setTimeout(() => paintTrail.remove(), 1000);
   if (chosen === target.name) {
     p.locked = true;
     p.score += 1;
@@ -734,7 +801,7 @@ function shootColor(button) {
     button.classList.add("spirit-miss");
     audio.sfx("wrong");
     toast(`Это ${chosen}. Ищи ${target.name}`, "try");
-    audio.speak(target.name, "mia", { rate: .8, pitch: 1.08 });
+    audio.speak(target.name.toLowerCase(), "mia");
     setTimeout(() => button.classList.remove("spirit-miss"), 650);
   }
 }
@@ -788,10 +855,13 @@ app.addEventListener("click", async (event) => {
   if (action === "edit-profile") { showProfileEditor(); return; }
   if (action === "close-editor") { event.target.closest(".profile-editor-layer")?.remove(); return; }
   if (action === "sound") { await audio.unlock(); audio.toggle(); return; }
+  if (action === "preview-music") { await audio.unlock(); audio.sfx("profile"); event.target.textContent = "♫ МУЗЫКА ИГРАЕТ"; event.target.classList.add("is-playing"); return; }
+  if (action === "instructions") { audio.sfx("tap"); showInstructions(); return; }
+  if (action === "close-instructions") { event.target.closest(".help-layer")?.remove(); return; }
   if (action === "repeat-dialogue") { const mission = greetingMissions[state.greeting.mission]; audio.speak(mission.line, mission.speaker); return; }
   if (action === "runner-go") { runRunner(); return; }
-  if (action === "repeat-number") { audio.speak(numberWords[state.runner.sequence[state.runner.wave] - 1], "penny"); return; }
-  if (action === "repeat-color") { audio.speak(state.paint.order[state.paint.round].name, "mia", { rate: .82, pitch: 1.08 }); return; }
+  if (action === "repeat-number") { audio.speak(numberWords[state.runner.sequence[state.runner.wave] - 1].toLowerCase(), "penny"); return; }
+  if (action === "repeat-color") { audio.speak(state.paint.order[state.paint.round].name.toLowerCase(), "mia"); return; }
   if (game) { routeGame(game); return; }
   if (answer) { greetingAnswer(answer.dataset.answer, answer); return; }
   if (word) { greetingWord(word.dataset.word, word); return; }
