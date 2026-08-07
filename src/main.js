@@ -123,6 +123,7 @@ class SoundStudio {
     this.step = 0;
     this.scene = "hub";
     this.voices = [];
+    this.voiceAudio = null;
     this.loadVoices();
   }
 
@@ -282,10 +283,55 @@ class SoundStudio {
     return [...english].sort((a, b) => score(b) - score(a))[0];
   }
 
+  speechSlug(text, character) {
+    const slug = text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return `${character}--${slug}`;
+  }
+
+  setSpeakingCharacter(character, speaking) {
+    const selector = character === "leo" ? ".story-leo" : `.story-npc[alt="${character}"]`;
+    document.querySelector(selector)?.classList.toggle("is-speaking", speaking);
+  }
+
+  stopVoice() {
+    if (this.voiceAudio) {
+      this.voiceAudio.onended = null;
+      this.voiceAudio.onerror = null;
+      this.voiceAudio.pause();
+      this.voiceAudio = null;
+    }
+    window.speechSynthesis?.cancel();
+    document.querySelectorAll(".story-character.is-speaking").forEach((el) => el.classList.remove("is-speaking"));
+  }
+
   speak(text, character = "narrator", options = {}) {
-    if (!progress.sound || !("speechSynthesis" in window)) return;
-    speechSynthesis.cancel();
+    if (!progress.sound) return;
+    this.stopVoice();
     const cleanText = text.replace(/[★]/g, "").trim();
+    const clip = new Audio(`${BASE}assets/voices/${this.speechSlug(cleanText, character)}.mp3`);
+    clip.preload = "auto";
+    clip.volume = .96;
+    this.voiceAudio = clip;
+    let fallbackStarted = false;
+    const fallback = () => {
+      if (fallbackStarted || this.voiceAudio !== clip) return;
+      fallbackStarted = true;
+      this.voiceAudio = null;
+      this.speakWithBrowser(cleanText, character, options);
+    };
+    clip.onplay = () => this.setSpeakingCharacter(character, true);
+    clip.onended = () => {
+      if (this.voiceAudio === clip) this.voiceAudio = null;
+      this.setSpeakingCharacter(character, false);
+      options.onend?.();
+    };
+    clip.onerror = fallback;
+    clip.play().catch(fallback);
+    return true;
+  }
+
+  speakWithBrowser(cleanText, character = "narrator", options = {}) {
+    if (!("speechSynthesis" in window)) { options.onend?.(); return false; }
     // Some engines spell uppercase teaching cards as initialisms. Speech always
     // receives a normal English word while the card remains uppercase visually.
     const normalizedText = /^[A-Z]+(?:[ -][A-Z]+)*[.!?]?$/.test(cleanText) ? cleanText.toLocaleLowerCase("en-US") : cleanText;
@@ -302,10 +348,7 @@ class SoundStudio {
     utterance.rate = options.rate || settings.rate;
     utterance.pitch = options.pitch || settings.pitch;
     utterance.volume = .95;
-    utterance.onstart = () => {
-      const selector = character === "leo" ? ".story-leo" : `.story-npc[alt="${character}"]`;
-      document.querySelector(selector)?.classList.add("is-speaking");
-    };
+    utterance.onstart = () => this.setSpeakingCharacter(character, true);
     utterance.onend = () => {
       document.querySelectorAll(".story-character.is-speaking").forEach((el) => el.classList.remove("is-speaking"));
       options.onend?.();
@@ -331,7 +374,7 @@ function clearGameLoops() {
   if (state.raf) cancelAnimationFrame(state.raf);
   state.timer = null;
   state.raf = null;
-  window.speechSynthesis?.cancel();
+  audio.stopVoice();
   document.querySelectorAll(".praise-pop").forEach((element) => element.remove());
 }
 
