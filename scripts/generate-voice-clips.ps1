@@ -9,14 +9,14 @@ $outputDir = Join-Path $projectRoot "public\assets\voices"
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $clips = @(
-  @{ Character="mia"; Voice="en-US-JennyNeural"; Rate="-2%"; Pitch="+0Hz"; Text="Good morning, Leo!" },
-  @{ Character="penny"; Voice="en-US-AriaNeural"; Rate="+1%"; Pitch="+4Hz"; Text="Hello! I'm Penny." },
+  @{ Character="mia"; Voice="en-US-AnaNeural"; Rate="+0%"; Pitch="-5Hz"; Text="Good morning, Leo!" },
+  @{ Character="penny"; Voice="en-US-JennyNeural"; Rate="+2%"; Pitch="+8Hz"; Text="Hello! I'm Penny." },
   @{ Character="archie"; Voice="en-US-GuyNeural"; Rate="+1%"; Pitch="+18Hz"; Text="Hi! What's your name?" },
   @{ Character="narrator"; Voice="en-US-AriaNeural"; Rate="-5%"; Pitch="+0Hz"; Text="You meet a new friend." },
-  @{ Character="penny"; Voice="en-US-AriaNeural"; Rate="+1%"; Pitch="+4Hz"; Text="My name is Penny." },
-  @{ Character="mia"; Voice="en-US-JennyNeural"; Rate="-2%"; Pitch="+0Hz"; Text="Good afternoon, Leo!" },
+  @{ Character="penny"; Voice="en-US-JennyNeural"; Rate="+2%"; Pitch="+8Hz"; Text="My name is Penny." },
+  @{ Character="mia"; Voice="en-US-AnaNeural"; Rate="+0%"; Pitch="-5Hz"; Text="Good afternoon, Leo!" },
   @{ Character="archie"; Voice="en-US-GuyNeural"; Rate="+1%"; Pitch="+18Hz"; Text="Hello! I'm Archie." },
-  @{ Character="mia"; Voice="en-US-JennyNeural"; Rate="-2%"; Pitch="+0Hz"; Text="See you tomorrow, Leo!" },
+  @{ Character="mia"; Voice="en-US-AnaNeural"; Rate="+0%"; Pitch="-5Hz"; Text="See you tomorrow, Leo!" },
   @{ Character="leo"; Voice="en-US-AndrewNeural"; Rate="-3%"; Pitch="+12Hz"; Text="Good morning, Mia!" },
   @{ Character="leo"; Voice="en-US-AndrewNeural"; Rate="-3%"; Pitch="+12Hz"; Text="Hi, Penny!" },
   @{ Character="leo"; Voice="en-US-AndrewNeural"; Rate="-3%"; Pitch="+12Hz"; Text="My name is Leo." },
@@ -28,15 +28,15 @@ $clips = @(
 )
 
 @("one","two","three","four","five","six") | ForEach-Object {
-  $clips += @{ Character="penny"; Voice="en-US-AriaNeural"; Rate="-3%"; Pitch="+4Hz"; Text=$_ }
+  $clips += @{ Character="penny"; Voice="en-US-JennyNeural"; Rate="-2%"; Pitch="+8Hz"; Text=$_ }
 }
 @("red","blue","yellow","green","purple","orange") | ForEach-Object {
-  $clips += @{ Character="mia"; Voice="en-US-JennyNeural"; Rate="-5%"; Pitch="+0Hz"; Text=$_ }
+  $clips += @{ Character="mia"; Voice="en-US-AnaNeural"; Rate="-2%"; Pitch="-5Hz"; Text=$_ }
 }
 @("Brilliant!","Fantastic!","Amazing!","Great job!","You did it!") | ForEach-Object {
   $clips += @{ Character="narrator"; Voice="en-US-AriaNeural"; Rate="-2%"; Pitch="+2Hz"; Text=$_ }
-  $clips += @{ Character="mia"; Voice="en-US-JennyNeural"; Rate="-1%"; Pitch="+0Hz"; Text=$_ }
-  $clips += @{ Character="penny"; Voice="en-US-AriaNeural"; Rate="+1%"; Pitch="+4Hz"; Text=$_ }
+  $clips += @{ Character="mia"; Voice="en-US-AnaNeural"; Rate="+1%"; Pitch="-5Hz"; Text=$_ }
+  $clips += @{ Character="penny"; Voice="en-US-JennyNeural"; Rate="+2%"; Pitch="+8Hz"; Text=$_ }
 }
 
 function Get-ClipName([string]$character, [string]$text) {
