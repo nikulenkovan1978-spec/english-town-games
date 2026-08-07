@@ -6,7 +6,7 @@ const BASE = import.meta.env.BASE_URL;
 const actionHero = (name) => `${BASE}assets/heroes/${name}-action.webp`;
 const talkHero = (name) => `${BASE}assets/heroes-v3/${name}-talk.webp`;
 const world = (name) => `${BASE}assets/worlds-v3/${name}.webp`;
-const VOICE_VERSION = "4";
+const VOICE_VERSION = "5";
 
 const ICONS = {
   spark: `<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 2l4.6 11.8L37 18.5l-11 6.7L24.8 38 16 28.7 3.4 31.5l6.2-11.2L3 9.4l12.7 2.5z" fill="currentColor"/></svg>`,
