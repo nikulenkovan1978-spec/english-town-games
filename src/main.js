@@ -28,8 +28,10 @@ const GAME_HELP = {
   paint: { icon: "🎨", title: "Как играть в Colorworks", steps: ["Послушай название цвета целиком.", "Найди сферу нужного цвета.", "Наведи прицел и нажми на сферу, чтобы выстрелить."], tip: "Динамик повторяет слово сколько угодно раз." },
 };
 
-const oldProgress = JSON.parse(localStorage.getItem("englishTownV2") || "null");
-const savedProgress = JSON.parse(localStorage.getItem("englishTownV3") || "null");
+// V4 intentionally starts a fresh adventure once after the major voice/game
+// update. Afterwards the newly created profile is saved normally again.
+const oldProgress = null;
+const savedProgress = JSON.parse(localStorage.getItem("englishTownV4") || "null");
 const progress = savedProgress || {
   profile: { name: "", avatar: "leo", createdAt: null },
   sparks: oldProgress?.sparks || 0,
@@ -50,7 +52,7 @@ const state = {
 };
 
 function saveProgress() {
-  localStorage.setItem("englishTownV3", JSON.stringify(progress));
+  localStorage.setItem("englishTownV4", JSON.stringify(progress));
 }
 
 function avatarSource(name = progress.profile.avatar) {
