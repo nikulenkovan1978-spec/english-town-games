@@ -654,7 +654,14 @@ function prepareRunnerWave() {
   if (r.wave >= 6) return renderFinish("runner", "ЧЕМПИОН NUMBER RUSH", "Penny добежала до финиша и собрала все числа от 1 до 6!", r.score);
   const target = r.sequence[r.wave];
   const wrong = [1,2,3,4,5,6].filter((n) => n !== target).sort(() => Math.random() - .5).slice(0,2);
-  r.gates = [target, ...wrong].sort(() => Math.random() - .5);
+  // Put the correct gate on a different lane every round, so the player must
+  // actively guide Penny instead of repeatedly staying on the same road.
+  const availableTargetLanes = [0,1,2].filter((lane) => lane !== r.lane);
+  const targetLane = availableTargetLanes[Math.floor(Math.random() * availableTargetLanes.length)];
+  r.gates = Array(3);
+  r.gates[targetLane] = target;
+  const decoyLanes = [0,1,2].filter((lane) => lane !== targetLane);
+  decoyLanes.forEach((lane, index) => { r.gates[lane] = wrong[index]; });
   r.progress = 0;
   r.active = false;
   const level = runnerLevel(r.wave);
